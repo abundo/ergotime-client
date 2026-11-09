@@ -5,6 +5,7 @@
 #include <QTimeZone>
 
 #include <optional>
+#include <vector>
 
 enum class TrackerState { Inactive, Active, Idle };
 
@@ -37,18 +38,27 @@ struct Project {
   std::optional<double> hourlyRate;
   std::optional<double> kmRate;
   bool active = false;
+  bool isDefault = false;
+};
+
+// One project note on a customer report. Several lines share one interval.
+struct ReportLine {
+  qint64 projectId = -1;
+  QString comment;
 };
 
 struct Report {
   qint64 id = 0;
   qint64 serverId = -1;
   qint64 userId = -1;
+  qint64 customerId = -1;
   qint64 projectId = -1;
   QDateTime start;
   std::optional<QDateTime> stop;
   // Empty, not null: Qt binds a null QString as SQL NULL, which report.comment
   // rejects.
   QString comment = QStringLiteral("");
+  std::vector<ReportLine> lines;
   QDateTime modified;
   qint64 seq = -1;
   bool deleted = false;
@@ -109,6 +119,123 @@ inline QString formatDurationHms(qint64 ms) {
       .arg(h, 2, 10, QChar('0'))
       .arg(m, 2, 10, QChar('0'))
       .arg(s, 2, 10, QChar('0'));
+}
+
+inline QString projectDisplayName(const std::vector<Project> &projects,
+                                  qint64 id) {
+  for (const Project &p : projects) {
+    if (p.id == id && !p.name.isEmpty()) {
+      return p.name;
+    }
+  }
+  return QStringLiteral("Project #%1").arg(id);
+}
+
+// Several project notes, labeled. One note stays as the comment text.
+inline QString formatLinesComment(const std::vector<ReportLine> &lines,
+                                  const std::vector<Project> &projects) {
+  if (lines.empty()) {
+    return QStringLiteral("");
+  }
+  if (lines.size() == 1) {
+    return lines[0].comment.isNull() ? QStringLiteral("") : lines[0].comment;
+  }
+  QString out;
+  for (size_t i = 0; i < lines.size(); ++i) {
+    if (i > 0) {
+      out += QStringLiteral("\n\n");
+    }
+    out += projectDisplayName(projects, lines[i].projectId);
+    if (!lines[i].comment.trimmed().isEmpty()) {
+      out += QLatin1Char('\n');
+      out += lines[i].comment;
+    }
+  }
+  return out;
+}
+
+// rows is every project shown in the comment table. anchorId is the
+// preselected row. Empty comments are dropped when another row has text.
+// When every comment is empty, only the preselected project is kept.
+inline bool assignReportLines(Report &r, const std::vector<Project> &projects,
+                              const std::vector<ReportLine> &rows,
+                              qint64 anchorId) {
+  std::vector<ReportLine> present;
+  qint64 customerId = 0;
+  bool anchorSeen = false;
+  qint64 defaultId = 0;
+  for (const ReportLine &row : rows) {
+    const Project *found = nullptr;
+    for (const Project &proj : projects) {
+      if (proj.id == row.projectId) {
+        found = &proj;
+        break;
+      }
+    }
+    if (!found) {
+      continue;
+    }
+    if (customerId == 0) {
+      customerId = found->customerId;
+    } else if (found->customerId != customerId) {
+      continue;
+    }
+    if (found->isDefault && defaultId == 0) {
+      defaultId = found->id;
+    }
+    if (row.projectId == anchorId) {
+      anchorSeen = true;
+    }
+    ReportLine kept;
+    kept.projectId = row.projectId;
+    kept.comment = row.comment.isNull() ? QString() : row.comment;
+    present.push_back(kept);
+  }
+  if (present.empty()) {
+    return false;
+  }
+  std::vector<ReportLine> kept;
+  for (const ReportLine &row : present) {
+    if (!row.comment.trimmed().isEmpty()) {
+      kept.push_back(row);
+    }
+  }
+  if (kept.empty()) {
+    qint64 pick = present[0].projectId;
+    if (anchorSeen) {
+      pick = anchorId;
+    } else if (defaultId > 0) {
+      pick = defaultId;
+    }
+    for (const ReportLine &row : present) {
+      if (row.projectId == pick) {
+        ReportLine one;
+        one.projectId = row.projectId;
+        one.comment = QStringLiteral("");
+        kept.push_back(one);
+        break;
+      }
+    }
+  }
+  if (kept.empty()) {
+    return false;
+  }
+  r.customerId = customerId;
+  r.lines = kept;
+  r.projectId = kept[0].projectId;
+  if (kept.size() > 1 && anchorSeen) {
+    for (const ReportLine &row : kept) {
+      if (row.projectId == anchorId) {
+        r.projectId = anchorId;
+        break;
+      }
+    }
+  }
+  r.comment = formatLinesComment(kept, projects);
+  if (r.comment.isNull()) {
+    r.comment = QStringLiteral("");
+  }
+  return true;
 }
 
 inline QString formatDurationHm(qint64 ms) {

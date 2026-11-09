@@ -14,6 +14,23 @@ Tracker::Tracker(Store &store, int idleTimeoutMs, QObject *parent)
 void Tracker::setComment(const QString &comment) {
   if (report_) {
     report_->comment = comment;
+    if (report_->lines.size() == 1) {
+      report_->lines[0].comment = comment;
+    }
+  }
+}
+
+void Tracker::setDraft(const Report &draft) {
+  if (!report_) {
+    return;
+  }
+  report_->customerId = draft.customerId;
+  report_->projectId = draft.projectId;
+  report_->comment =
+      draft.comment.isNull() ? QStringLiteral("") : draft.comment;
+  report_->lines = draft.lines;
+  if (auto p = store_.getProject(draft.projectId)) {
+    project_ = *p;
   }
 }
 
@@ -23,19 +40,37 @@ void Tracker::setIdleTimeoutMs(int ms) {
   }
 }
 
-void Tracker::start(const Project &project) {
+void Tracker::start(const Report &draft) {
   if (state_ == TrackerState::Active) {
     return;
   }
+  if (draft.projectId <= 0) {
+    return;
+  }
   const QDateTime now = QDateTime::currentDateTime().toLocalTime();
-  Report r;
-  r.projectId = project.id;
+  Report r = draft;
+  r.id = 0;
+  r.serverId = -1;
+  r.seq = 0;
+  r.updated = true;
+  r.deleted = false;
+  r.conflict = false;
+  r.clientUuid.clear();
   r.start = QDateTime(now.date(), QTime(now.time().hour(), now.time().minute(),
                                         now.time().second()));
+  r.stop.reset();
   r.modified = r.start;
-  r.updated = true;
-  r.serverId = -1;
-  project_ = project;
+  if (r.comment.isNull()) {
+    r.comment = QStringLiteral("");
+  }
+  if (r.lines.empty()) {
+    r.lines.push_back(ReportLine{r.projectId, r.comment});
+  }
+  if (auto p = store_.getProject(r.projectId)) {
+    project_ = *p;
+  } else {
+    project_.reset();
+  }
   report_ = r;
   setState(TrackerState::Active);
   timer_.start();

@@ -17,8 +17,9 @@ public:
 
   TrackerState state() const { return state_; }
   void setComment(const QString &comment);
+  void setDraft(const Report &draft);
   void setIdleTimeoutMs(int ms);
-  void start(const Project &project);
+  void start(const Report &draft);
   void stop();
 
 signals:

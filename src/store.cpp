@@ -7,13 +7,14 @@
 #include <QUuid>
 #include <QVariant>
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace {
 
 constexpr const char *kReportCols =
     "_id, server_id, user_id, project_id, start, stop, comment, modified, seq, "
-    "deleted, updated, client_uuid, conflict";
+    "deleted, updated, client_uuid, conflict, customer_id";
 
 [[noreturn]] void fail(const QSqlQuery &q, const QString &what) {
   throw std::runtime_error(
@@ -63,6 +64,7 @@ Project readProject(QSqlQuery &q) {
   p.hourlyRate = readDouble(q.value(5));
   p.kmRate = readDouble(q.value(6));
   p.active = q.value(7).toInt() != 0;
+  p.isDefault = q.value(8).toInt() != 0;
   return p;
 }
 
@@ -84,11 +86,278 @@ Report readReport(QSqlQuery &q) {
   r.updated = q.value(10).toInt() != 0;
   r.clientUuid = q.value(11).toString();
   r.conflict = q.value(12).toInt() != 0;
+  r.customerId = q.value(13).toLongLong();
   return r;
+}
+
+QString sqlText(const QString &s);
+
+void loadLines(QSqlDatabase db, Report &r) {
+  r.lines.clear();
+  if (r.id > 0) {
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "SELECT project_id, comment FROM report_line WHERE report_id = ? "
+        "ORDER BY position, _id"));
+    q.addBindValue(r.id);
+    if (!q.exec()) {
+      fail(q, QStringLiteral("load report lines"));
+    }
+    while (q.next()) {
+      ReportLine ln;
+      ln.projectId = q.value(0).toLongLong();
+      ln.comment = q.value(1).toString();
+      r.lines.push_back(ln);
+    }
+  }
+  if (r.lines.empty() && r.projectId > 0) {
+    ReportLine ln;
+    ln.projectId = r.projectId;
+    ln.comment = r.comment;
+    r.lines.push_back(ln);
+  }
+}
+
+void writeLines(QSqlDatabase db, const Report &r) {
+  if (r.id <= 0) {
+    return;
+  }
+  QSqlQuery del(db);
+  del.prepare(QStringLiteral("DELETE FROM report_line WHERE report_id = ?"));
+  del.addBindValue(r.id);
+  if (!del.exec()) {
+    fail(del, QStringLiteral("clear report lines"));
+  }
+  std::vector<ReportLine> lines = r.lines;
+  if (lines.empty() && r.projectId > 0) {
+    ReportLine ln;
+    ln.projectId = r.projectId;
+    ln.comment = r.comment;
+    lines.push_back(ln);
+  }
+  for (int i = 0; i < static_cast<int>(lines.size()); ++i) {
+    QSqlQuery ins(db);
+    ins.prepare(QStringLiteral(
+        "INSERT INTO report_line (report_id, project_id, comment, position) "
+        "VALUES (?, ?, ?, ?)"));
+    ins.addBindValue(r.id);
+    ins.addBindValue(lines[static_cast<size_t>(i)].projectId);
+    ins.addBindValue(sqlText(lines[static_cast<size_t>(i)].comment));
+    ins.addBindValue(i);
+    if (!ins.exec()) {
+      fail(ins, QStringLiteral("insert report line"));
+    }
+  }
 }
 
 QString newClientUuid() {
   return QUuid::createUuid().toString(QUuid::WithoutBraces);
+}
+
+void ensureKeepTable(QSqlDatabase db) {
+  QSqlQuery q(db);
+  if (!q.exec(
+          QStringLiteral("CREATE TEMP TABLE IF NOT EXISTS sync_keep_server_id ("
+                         "id INTEGER PRIMARY KEY)"))) {
+    fail(q, QStringLiteral("keep server ids"));
+  }
+}
+
+void fillKeepTable(QSqlDatabase db, const std::vector<qint64> &keep) {
+  ensureKeepTable(db);
+  QSqlQuery clear(db);
+  if (!clear.exec(QStringLiteral("DELETE FROM sync_keep_server_id"))) {
+    fail(clear, QStringLiteral("clear server ids"));
+  }
+  QSqlQuery ins(db);
+  ins.prepare(QStringLiteral("INSERT OR IGNORE INTO sync_keep_server_id (id) "
+                             "VALUES (?)"));
+  for (qint64 id : keep) {
+    if (id <= 0) {
+      continue;
+    }
+    ins.bindValue(0, id);
+    if (!ins.exec()) {
+      fail(ins, QStringLiteral("insert server id"));
+    }
+  }
+}
+
+struct DoomedProject {
+  qint64 id = 0;
+  qint64 customerId = 0;
+  QString name;
+};
+
+QString doomedName(const std::vector<DoomedProject> &doomed, qint64 id) {
+  for (const DoomedProject &d : doomed) {
+    if (d.id == id && !d.name.isEmpty()) {
+      return d.name;
+    }
+  }
+  return QStringLiteral("Project #%1").arg(id);
+}
+
+bool idIn(const std::vector<qint64> &ids, qint64 id) {
+  return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+
+// Lines on a project the server no longer has cannot be pushed. Keep the
+// note on a project that remains, so the interval still syncs.
+void retargetReportsOffProjects(QSqlDatabase db,
+                                const std::vector<DoomedProject> &doomed) {
+  if (doomed.empty()) {
+    return;
+  }
+  std::vector<qint64> doomedIds;
+  doomedIds.reserve(doomed.size());
+  for (const DoomedProject &d : doomed) {
+    doomedIds.push_back(d.id);
+  }
+  QSqlQuery ids(db);
+  if (!ids.exec(QStringLiteral(
+          "SELECT DISTINCT r._id FROM report r "
+          "WHERE r.project_id IN (SELECT _id FROM sync_drop_project) "
+          "OR r._id IN (SELECT report_id FROM report_line "
+          "WHERE project_id IN (SELECT _id FROM sync_drop_project))"))) {
+    fail(ids, QStringLiteral("reports on removed projects"));
+  }
+  std::vector<qint64> reportIds;
+  while (ids.next()) {
+    reportIds.push_back(ids.value(0).toLongLong());
+  }
+  std::vector<Project> projects;
+  QSqlQuery all(db);
+  if (!all.exec(QStringLiteral(
+          "SELECT _id, server_id, customer_id, name, costcenter, hourly_rate, "
+          "km_rate, active, is_default FROM project"))) {
+    fail(all, QStringLiteral("projects for retarget"));
+  }
+  while (all.next()) {
+    projects.push_back(readProject(all));
+  }
+  for (qint64 reportId : reportIds) {
+    QSqlQuery one(db);
+    one.prepare(QStringLiteral("SELECT ") + QLatin1String(kReportCols) +
+                QStringLiteral(" FROM report WHERE _id = ?"));
+    one.addBindValue(reportId);
+    if (!one.exec()) {
+      fail(one, QStringLiteral("load report for retarget"));
+    }
+    if (!one.next()) {
+      continue;
+    }
+    Report r = readReport(one);
+    loadLines(db, r);
+    std::vector<ReportLine> kept;
+    QString extra;
+    for (const ReportLine &ln : r.lines) {
+      if (!idIn(doomedIds, ln.projectId)) {
+        kept.push_back(ln);
+        continue;
+      }
+      if (!extra.isEmpty()) {
+        extra += QStringLiteral("\n\n");
+      }
+      extra += doomedName(doomed, ln.projectId);
+      if (!ln.comment.trimmed().isEmpty()) {
+        extra += QLatin1Char('\n');
+        extra += ln.comment;
+      }
+    }
+    qint64 customerId = r.customerId;
+    if (kept.empty()) {
+      if (customerId <= 0) {
+        for (const ReportLine &ln : r.lines) {
+          for (const DoomedProject &d : doomed) {
+            if (d.id == ln.projectId && d.customerId > 0) {
+              customerId = d.customerId;
+            }
+          }
+        }
+      }
+      QSqlQuery fallback(db);
+      fallback.prepare(QStringLiteral(
+          "SELECT _id, customer_id FROM project "
+          "WHERE customer_id = ? AND _id NOT IN (SELECT _id FROM "
+          "sync_drop_project) "
+          "ORDER BY is_default DESC, active DESC, name COLLATE NOCASE "
+          "LIMIT 1"));
+      fallback.addBindValue(customerId);
+      if (!fallback.exec()) {
+        fail(fallback, QStringLiteral("fallback project"));
+      }
+      if (fallback.next()) {
+        ReportLine ln;
+        ln.projectId = fallback.value(0).toLongLong();
+        ln.comment = r.comment;
+        kept.push_back(ln);
+        customerId = fallback.value(1).toLongLong();
+        extra.clear();
+      }
+    }
+    if (!extra.isEmpty() && !kept.empty()) {
+      if (kept[0].comment.trimmed().isEmpty()) {
+        kept[0].comment = extra;
+      } else {
+        kept[0].comment += QStringLiteral("\n\n");
+        kept[0].comment += extra;
+      }
+    }
+    if (kept.empty()) {
+      QSqlQuery clear(db);
+      clear.prepare(
+          QStringLiteral("DELETE FROM report_line WHERE report_id = ?"));
+      clear.addBindValue(r.id);
+      if (!clear.exec()) {
+        fail(clear, QStringLiteral("clear orphan report lines"));
+      }
+      QSqlQuery up(db);
+      up.prepare(QStringLiteral(
+          "UPDATE report SET project_id = -1, updated = CASE WHEN deleted = 0 "
+          "THEN 1 ELSE updated END WHERE _id = ?"));
+      up.addBindValue(r.id);
+      if (!up.exec()) {
+        fail(up, QStringLiteral("clear orphan report project"));
+      }
+      continue;
+    }
+    bool anchorKept = false;
+    for (const ReportLine &ln : kept) {
+      if (ln.projectId == r.projectId) {
+        anchorKept = true;
+        break;
+      }
+    }
+    if (!anchorKept) {
+      r.projectId = kept[0].projectId;
+    }
+    for (const Project &p : projects) {
+      if (p.id == r.projectId) {
+        customerId = p.customerId;
+        break;
+      }
+    }
+    r.customerId = customerId;
+    r.lines = kept;
+    r.comment = formatLinesComment(kept, projects);
+    if (!r.deleted) {
+      r.updated = true;
+    }
+    QSqlQuery up(db);
+    up.prepare(QStringLiteral(
+        "UPDATE report SET project_id=?, customer_id=?, comment=?, updated=? "
+        "WHERE _id=?"));
+    up.addBindValue(r.projectId);
+    up.addBindValue(r.customerId);
+    up.addBindValue(sqlText(r.comment));
+    up.addBindValue(b(r.updated));
+    up.addBindValue(r.id);
+    if (!up.exec()) {
+      fail(up, QStringLiteral("retarget report"));
+    }
+    writeLines(db, r);
+  }
 }
 
 // Qt binds a null QString as SQL NULL. An explicit NULL ignores DEFAULT ''
@@ -178,7 +447,8 @@ void migrateOn(QSqlDatabase db) {
                      "DEFAULT -1, customer_id INTEGER NOT NULL DEFAULT -1, "
                      "name TEXT NOT NULL DEFAULT '', costcenter TEXT NOT NULL "
                      "DEFAULT '', hourly_rate REAL, km_rate REAL, "
-                     "active INTEGER NOT NULL DEFAULT 0)"),
+                     "active INTEGER NOT NULL DEFAULT 0, "
+                     "is_default INTEGER NOT NULL DEFAULT 0)"),
       QStringLiteral("CREATE TABLE IF NOT EXISTS report ("
                      "_id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL "
                      "DEFAULT -1, project_id INTEGER NOT NULL DEFAULT -1, "
@@ -187,7 +457,12 @@ void migrateOn(QSqlDatabase db) {
                      "seq INTEGER NOT NULL DEFAULT -1, deleted INTEGER NOT "
                      "NULL DEFAULT 0, server_id INTEGER NOT NULL DEFAULT -1, "
                      "updated INTEGER NOT NULL DEFAULT 0, client_uuid TEXT NOT "
-                     "NULL DEFAULT '', conflict INTEGER NOT NULL DEFAULT 0)"),
+                     "NULL DEFAULT '', conflict INTEGER NOT NULL DEFAULT 0, "
+                     "customer_id INTEGER NOT NULL DEFAULT -1)"),
+      QStringLiteral("CREATE TABLE IF NOT EXISTS report_line ("
+                     "_id INTEGER PRIMARY KEY, report_id INTEGER NOT NULL, "
+                     "project_id INTEGER NOT NULL, comment TEXT NOT NULL "
+                     "DEFAULT '', position INTEGER NOT NULL DEFAULT 0)"),
       QStringLiteral("CREATE TABLE IF NOT EXISTS sync_state ("
                      "id INTEGER PRIMARY KEY CHECK (id = 1), last_seq INTEGER "
                      "NOT NULL DEFAULT 0, last_ok INTEGER NOT NULL DEFAULT 0, "
@@ -215,10 +490,42 @@ void migrateOn(QSqlDatabase db) {
                      "ON customer(server_id) WHERE server_id > 0"),
       QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_project_server_id "
                      "ON project(server_id) WHERE server_id > 0"),
+      QStringLiteral("CREATE INDEX IF NOT EXISTS idx_report_line_report ON "
+                     "report_line(report_id)"),
   };
   for (const QString &sql : stmts) {
     exec(sql);
   }
+
+  auto hasColumn = [&](const QString &table, const QString &column) {
+    QSqlQuery info(db);
+    if (!info.exec(QStringLiteral("PRAGMA table_info(%1)").arg(table))) {
+      return false;
+    }
+    while (info.next()) {
+      if (info.value(1).toString() == column) {
+        return true;
+      }
+    }
+    return false;
+  };
+  if (!hasColumn(QStringLiteral("project"), QStringLiteral("is_default"))) {
+    exec(QStringLiteral("ALTER TABLE project ADD COLUMN is_default INTEGER NOT "
+                        "NULL DEFAULT 0"));
+  }
+  if (!hasColumn(QStringLiteral("report"), QStringLiteral("customer_id"))) {
+    exec(QStringLiteral("ALTER TABLE report ADD COLUMN customer_id INTEGER NOT "
+                        "NULL DEFAULT -1"));
+  }
+  exec(QStringLiteral(
+      "UPDATE report SET customer_id = (SELECT customer_id FROM project "
+      "WHERE project._id = report.project_id) "
+      "WHERE customer_id IS NULL OR customer_id <= 0"));
+  exec(QStringLiteral(
+      "INSERT INTO report_line (report_id, project_id, comment, position) "
+      "SELECT r._id, r.project_id, r.comment, 0 FROM report r "
+      "WHERE r.project_id > 0 AND NOT EXISTS ("
+      "SELECT 1 FROM report_line l WHERE l.report_id = r._id)"));
 
   QSqlQuery seq(db);
   exec(QStringLiteral("SELECT last_seq FROM sync_state WHERE id = 1"));
@@ -368,28 +675,42 @@ void Store::upsertCustomerByServerId(const Customer &cust) {
   }
 }
 
-qint64 Store::deleteLocalOnlyCustomers() {
+qint64 Store::deleteCustomersExceptServerIds(const std::vector<qint64> &keep) {
   Conn c = connection();
-  QSqlQuery q(c.db);
-  if (!q.exec(QStringLiteral(
-          "DELETE FROM customer WHERE server_id IS NULL OR server_id <= 0"))) {
-    fail(q, QStringLiteral("prune customers"));
+  if (!c.db.transaction()) {
+    throw std::runtime_error("begin customer prune");
   }
-  return q.numRowsAffected();
+  try {
+    fillKeepTable(c.db, keep);
+    QSqlQuery q(c.db);
+    if (!q.exec(QStringLiteral("DELETE FROM customer WHERE server_id NOT IN "
+                               "(SELECT id FROM sync_keep_server_id)"))) {
+      fail(q, QStringLiteral("prune customers"));
+    }
+    const qint64 n = q.numRowsAffected();
+    if (!c.db.commit()) {
+      throw std::runtime_error("commit customer prune");
+    }
+    return n;
+  } catch (...) {
+    c.db.rollback();
+    throw;
+  }
 }
 
 std::vector<Project> Store::listProjects(qint64 customerId, bool activeOnly) {
   Conn c = connection();
   QString sql =
       QStringLiteral("SELECT _id, server_id, customer_id, name, costcenter, "
-                     "hourly_rate, km_rate, active FROM project WHERE 1=1");
+                     "hourly_rate, km_rate, active, is_default FROM project "
+                     "WHERE 1=1");
   if (customerId > 0) {
     sql += QStringLiteral(" AND customer_id = ?");
   }
   if (activeOnly) {
     sql += QStringLiteral(" AND active = 1");
   }
-  sql += QStringLiteral(" ORDER BY name COLLATE NOCASE");
+  sql += QStringLiteral(" ORDER BY is_default DESC, name COLLATE NOCASE");
   QSqlQuery q(c.db);
   q.prepare(sql);
   if (customerId > 0) {
@@ -410,7 +731,7 @@ std::optional<Project> Store::getProject(qint64 id) {
   QSqlQuery q(c.db);
   q.prepare(QStringLiteral(
       "SELECT _id, server_id, customer_id, name, costcenter, hourly_rate, "
-      "km_rate, active FROM project WHERE _id = ?"));
+      "km_rate, active, is_default FROM project WHERE _id = ?"));
   q.addBindValue(id);
   if (!q.exec()) {
     fail(q, QStringLiteral("get project"));
@@ -429,7 +750,7 @@ std::optional<Project> Store::getProjectByServerId(qint64 serverId) {
   QSqlQuery q(c.db);
   q.prepare(QStringLiteral(
       "SELECT _id, server_id, customer_id, name, costcenter, hourly_rate, "
-      "km_rate, active FROM project WHERE server_id = ?"));
+      "km_rate, active, is_default FROM project WHERE server_id = ?"));
   q.addBindValue(serverId);
   if (!q.exec()) {
     fail(q, QStringLiteral("get project by server"));
@@ -455,7 +776,8 @@ void Store::upsertProjectByServerId(const Project &p) {
     QSqlQuery ins(c.db);
     ins.prepare(QStringLiteral(
         "INSERT INTO project (server_id, customer_id, name, costcenter, "
-        "hourly_rate, km_rate, active) VALUES (?, ?, ?, ?, ?, ?, ?)"));
+        "hourly_rate, km_rate, active, is_default) VALUES (?, ?, ?, ?, ?, ?, "
+        "?, ?)"));
     ins.addBindValue(p.serverId);
     ins.addBindValue(p.customerId);
     ins.addBindValue(p.name);
@@ -463,35 +785,82 @@ void Store::upsertProjectByServerId(const Project &p) {
     ins.addBindValue(optDouble(p.hourlyRate));
     ins.addBindValue(optDouble(p.kmRate));
     ins.addBindValue(b(p.active));
+    ins.addBindValue(b(p.isDefault));
     if (!ins.exec()) {
       fail(ins, QStringLiteral("insert project"));
     }
     return;
   }
   QSqlQuery up(c.db);
-  up.prepare(
-      QStringLiteral("UPDATE project SET customer_id=?, name=?, costcenter=?, "
-                     "hourly_rate=?, km_rate=?, active=? WHERE _id=?"));
+  up.prepare(QStringLiteral(
+      "UPDATE project SET customer_id=?, name=?, costcenter=?, "
+      "hourly_rate=?, km_rate=?, active=?, is_default=? WHERE _id=?"));
   up.addBindValue(p.customerId);
   up.addBindValue(p.name);
   up.addBindValue(p.costCenter);
   up.addBindValue(optDouble(p.hourlyRate));
   up.addBindValue(optDouble(p.kmRate));
   up.addBindValue(b(p.active));
+  up.addBindValue(b(p.isDefault));
   up.addBindValue(find.value(0).toLongLong());
   if (!up.exec()) {
     fail(up, QStringLiteral("update project"));
   }
 }
 
-qint64 Store::deleteLocalOnlyProjects() {
+qint64 Store::deleteProjectsExceptServerIds(const std::vector<qint64> &keep) {
   Conn c = connection();
-  QSqlQuery q(c.db);
-  if (!q.exec(QStringLiteral(
-          "DELETE FROM project WHERE server_id IS NULL OR server_id <= 0"))) {
-    fail(q, QStringLiteral("prune projects"));
+  QSqlQuery drop(c.db);
+  if (!drop.exec(QStringLiteral(
+          "CREATE TEMP TABLE IF NOT EXISTS sync_drop_project ("
+          "_id INTEGER PRIMARY KEY, customer_id INTEGER, name TEXT)"))) {
+    fail(drop, QStringLiteral("drop project table"));
   }
-  return q.numRowsAffected();
+  if (!c.db.transaction()) {
+    throw std::runtime_error("begin project prune");
+  }
+  try {
+    fillKeepTable(c.db, keep);
+    QSqlQuery clear(c.db);
+    if (!clear.exec(QStringLiteral("DELETE FROM sync_drop_project"))) {
+      fail(clear, QStringLiteral("clear dropped projects"));
+    }
+    QSqlQuery sel(c.db);
+    if (!sel.exec(QStringLiteral(
+            "INSERT INTO sync_drop_project (_id, customer_id, name) "
+            "SELECT _id, customer_id, name FROM project "
+            "WHERE server_id NOT IN (SELECT id FROM sync_keep_server_id) "
+            "OR customer_id NOT IN (SELECT _id FROM customer)"))) {
+      fail(sel, QStringLiteral("select removed projects"));
+    }
+    QSqlQuery list(c.db);
+    if (!list.exec(QStringLiteral(
+            "SELECT _id, customer_id, name FROM sync_drop_project"))) {
+      fail(list, QStringLiteral("list removed projects"));
+    }
+    std::vector<DoomedProject> doomed;
+    while (list.next()) {
+      DoomedProject d;
+      d.id = list.value(0).toLongLong();
+      d.customerId = list.value(1).toLongLong();
+      d.name = list.value(2).toString();
+      doomed.push_back(d);
+    }
+    retargetReportsOffProjects(c.db, doomed);
+    QSqlQuery q(c.db);
+    if (!q.exec(QStringLiteral("DELETE FROM project WHERE _id IN "
+                               "(SELECT _id FROM sync_drop_project)"))) {
+      fail(q, QStringLiteral("prune projects"));
+    }
+    const qint64 n = q.numRowsAffected();
+    if (!c.db.commit()) {
+      throw std::runtime_error("commit project prune");
+    }
+    return n;
+  } catch (...) {
+    c.db.rollback();
+    throw;
+  }
 }
 
 qint64 Store::serverProjectId(qint64 localId) {
@@ -567,7 +936,9 @@ std::optional<Report> Store::getReport(qint64 id) {
   if (!q.next()) {
     return std::nullopt;
   }
-  return readReport(q);
+  Report r = readReport(q);
+  loadLines(c.db, r);
+  return r;
 }
 
 void Store::deleteReport(qint64 id) {
@@ -601,8 +972,8 @@ void Store::saveReport(Report &r) {
     QSqlQuery q(c.db);
     q.prepare(QStringLiteral(
         "INSERT INTO report (user_id, project_id, start, stop, comment, "
-        "modified, seq, deleted, server_id, updated, client_uuid, conflict) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
+        "modified, seq, deleted, server_id, updated, client_uuid, conflict, "
+        "customer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
     q.addBindValue(r.userId);
     q.addBindValue(r.projectId);
     q.addBindValue(formatTime(r.start));
@@ -615,10 +986,12 @@ void Store::saveReport(Report &r) {
     q.addBindValue(b(r.updated));
     q.addBindValue(r.clientUuid);
     q.addBindValue(b(r.conflict));
+    q.addBindValue(r.customerId);
     if (!q.exec()) {
       fail(q, QStringLiteral("insert report"));
     }
     r.id = q.lastInsertId().toLongLong();
+    writeLines(c.db, r);
     return;
   }
   r.modified = QDateTime::currentDateTimeUtc();
@@ -629,7 +1002,7 @@ void Store::saveReport(Report &r) {
   q.prepare(QStringLiteral(
       "UPDATE report SET user_id=?, project_id=?, start=?, stop=?, comment=?, "
       "modified=?, seq=?, deleted=?, server_id=?, updated=?, "
-      "client_uuid=?, conflict=? WHERE _id=?"));
+      "client_uuid=?, conflict=?, customer_id=? WHERE _id=?"));
   q.addBindValue(r.userId);
   q.addBindValue(r.projectId);
   q.addBindValue(formatTime(r.start));
@@ -642,10 +1015,12 @@ void Store::saveReport(Report &r) {
   q.addBindValue(b(r.updated));
   q.addBindValue(r.clientUuid);
   q.addBindValue(b(r.conflict));
+  q.addBindValue(r.customerId);
   q.addBindValue(r.id);
   if (!q.exec()) {
     fail(q, QStringLiteral("update report"));
   }
+  writeLines(c.db, r);
 }
 
 std::vector<Report> Store::listReportsBetween(const QDateTime &from,
@@ -664,6 +1039,9 @@ std::vector<Report> Store::listReportsBetween(const QDateTime &from,
   while (q.next()) {
     out.push_back(readReport(q));
   }
+  for (Report &r : out) {
+    loadLines(c.db, r);
+  }
   return out;
 }
 
@@ -677,9 +1055,13 @@ std::vector<PendingOp> Store::listPendingOps() {
                          "ORDER BY start"))) {
     fail(q, QStringLiteral("list unsynced"));
   }
-  std::vector<PendingOp> deletes, creates, updates;
+  std::vector<Report> rows;
   while (q.next()) {
-    Report r = readReport(q);
+    rows.push_back(readReport(q));
+  }
+  std::vector<PendingOp> deletes, creates, updates;
+  for (Report &r : rows) {
+    loadLines(c.db, r);
     if (r.deleted && r.serverId > 0) {
       deletes.push_back(PendingOp{OpKind::Delete, r});
     } else if (!r.deleted && r.serverId <= 0 && r.stop) {
@@ -720,7 +1102,9 @@ std::optional<Report> Store::getReportByServerId(qint64 serverId) {
   if (!q.next()) {
     return std::nullopt;
   }
-  return readReport(q);
+  Report r = readReport(q);
+  loadLines(c.db, r);
+  return r;
 }
 
 std::optional<Report> Store::getReportByClientUuid(const QString &uuid) {
@@ -738,11 +1122,19 @@ std::optional<Report> Store::getReportByClientUuid(const QString &uuid) {
   if (!q.next()) {
     return std::nullopt;
   }
-  return readReport(q);
+  Report r = readReport(q);
+  loadLines(c.db, r);
+  return r;
 }
 
 void Store::hardDeleteReport(qint64 id) {
   Conn c = connection();
+  QSqlQuery lines(c.db);
+  lines.prepare(QStringLiteral("DELETE FROM report_line WHERE report_id = ?"));
+  lines.addBindValue(id);
+  if (!lines.exec()) {
+    fail(lines, QStringLiteral("delete report lines"));
+  }
   QSqlQuery q(c.db);
   q.prepare(QStringLiteral("DELETE FROM report WHERE _id = ?"));
   q.addBindValue(id);
@@ -821,7 +1213,7 @@ ApplyResult Store::applyServerReport(const Report &r) {
     q.prepare(QStringLiteral(
         "UPDATE report SET user_id=?, project_id=?, start=?, stop=?, "
         "comment=?, modified=?, seq=?, deleted=0, updated=0, "
-        "server_id=?, client_uuid=?, conflict=0 WHERE _id=?"));
+        "server_id=?, client_uuid=?, conflict=0, customer_id=? WHERE _id=?"));
     q.addBindValue(r.userId);
     q.addBindValue(r.projectId);
     q.addBindValue(formatTime(r.start));
@@ -831,18 +1223,22 @@ ApplyResult Store::applyServerReport(const Report &r) {
     q.addBindValue(r.seq);
     q.addBindValue(r.serverId);
     q.addBindValue(sqlText(cu));
+    q.addBindValue(r.customerId);
     q.addBindValue(existing->id);
     if (!q.exec()) {
       fail(q, QStringLiteral("apply update"));
     }
+    Report stored = r;
+    stored.id = existing->id;
+    writeLines(c.db, stored);
     res.action = res.linked ? QStringLiteral("link") : QStringLiteral("update");
     return res;
   }
   QSqlQuery q(c.db);
   q.prepare(QStringLiteral(
       "INSERT INTO report (user_id, project_id, start, stop, comment, "
-      "modified, seq, deleted, server_id, updated, client_uuid, conflict) "
-      "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, 0)"));
+      "modified, seq, deleted, server_id, updated, client_uuid, conflict, "
+      "customer_id) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?, 0, ?)"));
   q.addBindValue(r.userId);
   q.addBindValue(r.projectId);
   q.addBindValue(formatTime(r.start));
@@ -852,9 +1248,13 @@ ApplyResult Store::applyServerReport(const Report &r) {
   q.addBindValue(r.seq);
   q.addBindValue(r.serverId);
   q.addBindValue(sqlText(r.clientUuid));
+  q.addBindValue(r.customerId);
   if (!q.exec()) {
     fail(q, QStringLiteral("apply insert"));
   }
+  Report stored = r;
+  stored.id = q.lastInsertId().toLongLong();
+  writeLines(c.db, stored);
   res.action = QStringLiteral("insert");
   return res;
 }

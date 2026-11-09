@@ -4,18 +4,104 @@
 #include <QDateTimeEdit>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QEvent>
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QHeaderView>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QStyledItemDelegate>
 #include <QTabWidget>
-#include <QTextEdit>
+#include <QTableWidget>
+#include <QTextDocument>
 #include <QVBoxLayout>
 
 namespace {
+
+int commentRowHeight(const QFontMetrics &fm, const QString &text) {
+  const int lines = qMax(1, text.count(QLatin1Char('\n')) + 1);
+  return fm.lineSpacing() * lines + 8;
+}
+
+void fitCommentEditor(QPlainTextEdit *edit, int row) {
+  const int h = commentRowHeight(edit->fontMetrics(), edit->toPlainText());
+  QWidget *parent = edit->parentWidget();
+  QTableWidget *table = nullptr;
+  while (parent != nullptr && table == nullptr) {
+    table = qobject_cast<QTableWidget *>(parent);
+    parent = parent->parentWidget();
+  }
+  if (table != nullptr && row >= 0) {
+    table->setRowHeight(row, h);
+  }
+  QRect rect = edit->geometry();
+  rect.setHeight(h);
+  edit->setGeometry(rect);
+}
+
+class MultilineCommentDelegate : public QStyledItemDelegate {
+public:
+  using QStyledItemDelegate::QStyledItemDelegate;
+
+  QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &,
+                        const QModelIndex &index) const override {
+    auto *edit = new QPlainTextEdit(parent);
+    edit->setTabChangesFocus(true);
+    edit->setFrameShape(QFrame::NoFrame);
+    edit->setLineWrapMode(QPlainTextEdit::NoWrap);
+    edit->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    edit->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    const int row = index.row();
+    QObject::connect(edit->document(), &QTextDocument::contentsChanged, edit,
+                     [edit, row] { fitCommentEditor(edit, row); });
+    return edit;
+  }
+
+  void setEditorData(QWidget *editor, const QModelIndex &index) const override {
+    if (auto *edit = qobject_cast<QPlainTextEdit *>(editor)) {
+      edit->setPlainText(index.data(Qt::EditRole).toString());
+      fitCommentEditor(edit, index.row());
+    }
+  }
+
+  void setModelData(QWidget *editor, QAbstractItemModel *model,
+                    const QModelIndex &index) const override {
+    if (auto *edit = qobject_cast<QPlainTextEdit *>(editor)) {
+      model->setData(index, edit->toPlainText(), Qt::EditRole);
+    }
+  }
+
+  QSize sizeHint(const QStyleOptionViewItem &option,
+                 const QModelIndex &index) const override {
+    QSize size = QStyledItemDelegate::sizeHint(option, index);
+    size.setHeight(commentRowHeight(option.fontMetrics,
+                                    index.data(Qt::DisplayRole).toString()));
+    return size;
+  }
+
+  void updateEditorGeometry(QWidget *editor, const QStyleOptionViewItem &option,
+                            const QModelIndex &index) const override {
+    QRect rect = option.rect;
+    rect.setHeight(commentRowHeight(editor->fontMetrics(),
+                                    index.data(Qt::EditRole).toString()));
+    editor->setGeometry(rect);
+  }
+
+  bool eventFilter(QObject *object, QEvent *event) override {
+    if (event->type() == QEvent::KeyPress) {
+      const auto *key = static_cast<const QKeyEvent *>(event);
+      if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) {
+        return false;
+      }
+    }
+    return QStyledItemDelegate::eventFilter(object, event);
+  }
+};
 
 QString syncFlags(const Report &r) {
   QString s;
@@ -34,32 +120,85 @@ QString syncFlags(const Report &r) {
   return s.isEmpty() ? QStringLiteral("local only") : s;
 }
 
-void fillProjects(QComboBox *proj, Store &store, qint64 customerId,
-                  qint64 keepProject) {
-  proj->clear();
+QString lineComment(const Report &r, qint64 projectId) {
+  for (const ReportLine &ln : r.lines) {
+    if (ln.projectId == projectId) {
+      return ln.comment;
+    }
+  }
+  if (r.lines.empty() && r.projectId == projectId) {
+    return r.comment;
+  }
+  return {};
+}
+
+void fillCommentTable(QTableWidget *table, Store &store, qint64 customerId,
+                      const Report &r, qint64 anchorId) {
+  table->setRowCount(0);
   if (customerId <= 0) {
     return;
   }
-  bool have = false;
-  for (const Project &p : store.listProjects(customerId, true)) {
-    proj->addItem(p.name, static_cast<qlonglong>(p.id));
-    if (p.id == keepProject) {
-      have = true;
+  std::vector<Project> projects;
+  for (const Project &p : store.listProjects(customerId, false)) {
+    const bool used = !lineComment(r, p.id).isNull() || p.id == r.projectId ||
+                      p.id == anchorId;
+    if (p.active || used) {
+      projects.push_back(p);
     }
   }
-  if (keepProject > 0 && !have) {
-    if (auto p = store.getProject(keepProject);
-        p && p->customerId == customerId) {
-      proj->addItem(p->name, static_cast<qlonglong>(p->id));
+  table->setRowCount(static_cast<int>(projects.size()));
+  int select = 0;
+  bool picked = false;
+  for (int i = 0; i < static_cast<int>(projects.size()); ++i) {
+    const Project &p = projects[static_cast<size_t>(i)];
+    auto *name = new QTableWidgetItem(
+        p.isDefault ? p.name + QStringLiteral(" (default)") : p.name);
+    name->setData(Qt::UserRole, static_cast<qlonglong>(p.id));
+    name->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    name->setTextAlignment(Qt::AlignLeft | Qt::AlignTop);
+    table->setItem(i, 0, name);
+    QString text = lineComment(r, p.id);
+    if (text.isNull()) {
+      text = QString();
+    }
+    auto *comment = new QTableWidgetItem(text);
+    comment->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable |
+                      Qt::ItemIsEditable);
+    comment->setTextAlignment(Qt::AlignLeft | Qt::AlignTop);
+    table->setItem(i, 1, comment);
+    if (!picked && anchorId > 0 && p.id == anchorId) {
+      select = i;
+      picked = true;
+    } else if (!picked && anchorId <= 0 && p.isDefault) {
+      select = i;
+      picked = true;
     }
   }
-  const int idx = proj->findData(static_cast<qlonglong>(keepProject));
-  if (idx >= 0) {
-    proj->setCurrentIndex(idx);
+  if (table->rowCount() > 0) {
+    table->setCurrentCell(select, 1);
   }
 }
 
 } // namespace
+
+void configureProjectCommentTable(QTableWidget *table) {
+  table->setItemDelegateForColumn(1, new MultilineCommentDelegate(table));
+  table->setWordWrap(false);
+  table->setTextElideMode(Qt::ElideRight);
+  const int oneLine = commentRowHeight(table->fontMetrics(), QString());
+  table->verticalHeader()->setMinimumSectionSize(oneLine);
+  table->verticalHeader()->setDefaultSectionSize(oneLine);
+  table->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+  QObject::connect(table, &QTableWidget::itemChanged, table,
+                   [table](QTableWidgetItem *item) {
+                     if (item == nullptr || item->column() != 1) {
+                       return;
+                     }
+                     table->setRowHeight(
+                         item->row(),
+                         commentRowHeight(table->fontMetrics(), item->text()));
+                   });
+}
 
 std::optional<Config> showSettingsDialog(QWidget *parent, const Config &cfg) {
   QDialog dlg(parent);
@@ -158,15 +297,14 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
   QDialog dlg(parent);
   dlg.setWindowTitle(isNew ? QStringLiteral("Create report")
                            : QStringLiteral("Edit report"));
-  dlg.resize(480, 480);
+  dlg.resize(640, 560);
   auto *root = new QVBoxLayout(&dlg);
   auto *form = new QFormLayout;
   form->addRow(QStringLiteral("Sync state"), new QLabel(syncFlags(r)));
 
   auto *custCombo = new QComboBox;
-  auto *projCombo = new QComboBox;
-  qint64 selectedCust = 0;
-  if (r.projectId > 0) {
+  qint64 selectedCust = r.customerId;
+  if (selectedCust <= 0 && r.projectId > 0) {
     selectedCust = store.projectCustomerLocalId(r.projectId);
   }
   for (const Customer &c : store.listCustomers(true)) {
@@ -182,18 +320,33 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
   if (custIdx >= 0) {
     custCombo->setCurrentIndex(custIdx);
   }
+  auto *comments = new QTableWidget(0, 2);
+  comments->setHorizontalHeaderLabels(
+      {QStringLiteral("Project"), QStringLiteral("Comment")});
+  comments->horizontalHeader()->setSectionResizeMode(
+      0, QHeaderView::ResizeToContents);
+  comments->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+  comments->verticalHeader()->setVisible(false);
+  comments->setSelectionBehavior(QAbstractItemView::SelectRows);
+  comments->setSelectionMode(QAbstractItemView::SingleSelection);
+  comments->setMinimumHeight(160);
+  configureProjectCommentTable(comments);
+  qint64 anchorId = 0;
+  if (r.lines.size() == 1) {
+    anchorId = r.lines[0].projectId;
+  } else if (r.projectId > 0) {
+    anchorId = r.projectId;
+  }
   auto reloadProjects = [&] {
     const qint64 custId = custCombo->currentData().toLongLong();
-    fillProjects(projCombo, store, custId, r.projectId);
+    const bool sameCustomer = custId == selectedCust;
+    fillCommentTable(comments, store, custId, sameCustomer ? r : Report{},
+                     sameCustomer ? anchorId : 0);
   };
   reloadProjects();
   QObject::connect(custCombo, qOverload<int>(&QComboBox::currentIndexChanged),
-                   &dlg, [&](int) {
-                     r.projectId = 0;
-                     reloadProjects();
-                   });
+                   &dlg, [&](int) { reloadProjects(); });
   form->addRow(QStringLiteral("Customer"), custCombo);
-  form->addRow(QStringLiteral("Project"), projCombo);
 
   auto *dtStart = new QDateTimeEdit(r.start.toLocalTime());
   auto *dtStop = new QDateTimeEdit(
@@ -244,11 +397,7 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
   form->addRow(QStringLiteral("Stop"), nudgeRow(dtStop, false));
   form->addRow(QStringLiteral("Length"), len);
 
-  auto *comment = new QTextEdit;
-  comment->setAcceptRichText(false);
-  comment->setPlainText(r.comment);
-  comment->setMinimumHeight(60);
-  form->addRow(QStringLiteral("Comment"), comment);
+  form->addRow(QStringLiteral("Comment"), comments);
   root->addLayout(form, 1);
 
   auto *save = new QPushButton(QStringLiteral("Save"));
@@ -265,10 +414,29 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
   bool saved = false;
   QObject::connect(cancel, &QPushButton::clicked, &dlg, &QDialog::reject);
   QObject::connect(save, &QPushButton::clicked, &dlg, [&] {
-    const qint64 projId = projCombo->currentData().toLongLong();
-    if (projId <= 0) {
-      QMessageBox::warning(&dlg, QStringLiteral("Save report"),
-                           QStringLiteral("Please select a project."));
+    const qint64 custId = custCombo->currentData().toLongLong();
+    std::vector<Project> projects = store.listProjects(custId, false);
+    std::vector<ReportLine> rows;
+    qint64 anchor = 0;
+    const int current = comments->currentRow();
+    for (int i = 0; i < comments->rowCount(); ++i) {
+      const auto *name = comments->item(i, 0);
+      const auto *text = comments->item(i, 1);
+      if (!name) {
+        continue;
+      }
+      ReportLine ln;
+      ln.projectId = name->data(Qt::UserRole).toLongLong();
+      ln.comment = text ? text->text() : QString();
+      rows.push_back(ln);
+      if (i == current) {
+        anchor = ln.projectId;
+      }
+    }
+    if (!assignReportLines(r, projects, rows, anchor)) {
+      QMessageBox::warning(
+          &dlg, QStringLiteral("Save report"),
+          QStringLiteral("Please select a customer with a project."));
       return;
     }
     QDateTime start = dtStart->dateTime();
@@ -289,10 +457,8 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
           QStringLiteral("Report cannot be longer than 24 hours."));
       return;
     }
-    r.projectId = projId;
     r.start = start;
     r.stop = stop;
-    r.comment = comment->toPlainText();
     try {
       store.saveReport(r);
     } catch (const std::exception &ex) {

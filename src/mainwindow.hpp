@@ -22,7 +22,6 @@ class QMenu;
 class QPushButton;
 class QSplitter;
 class QTableWidget;
-class QTextEdit;
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
@@ -44,7 +43,9 @@ protected:
 private:
   void buildUi();
   void refreshCatalog();
-  void refreshProjects();
+  void fillCommentTable(qint64 customerId, qint64 anchorId);
+  void pushDraft();
+  void beginTracking();
   void refreshReports();
   void refreshSyncStatus();
   void rebuildTray();
@@ -60,10 +61,9 @@ private:
 
   QSplitter *splitter_ = nullptr;
   QListWidget *customers_ = nullptr;
-  QListWidget *projects_ = nullptr;
   QPushButton *startBtn_ = nullptr;
   QPushButton *stopBtn_ = nullptr;
-  QTextEdit *comment_ = nullptr;
+  QTableWidget *comment_ = nullptr;
   QLabel *stateLabel_ = nullptr;
   QLabel *lengthLabel_ = nullptr;
   QLabel *idleLabel_ = nullptr;

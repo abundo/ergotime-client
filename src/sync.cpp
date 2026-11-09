@@ -21,8 +21,8 @@ namespace {
 // Spoken desktop sync contract. Widen the range when this client can
 // still talk to an older or newer server. Bump it only for a break:
 // a removed or redefined field, a new timestamp format, or a new auth scheme.
-constexpr int kMinSyncProtocol = 1;
-constexpr int kMaxSyncProtocol = 1;
+constexpr int kMinSyncProtocol = 2;
+constexpr int kMaxSyncProtocol = 2;
 
 QString syncProtocolRange() {
   if (kMinSyncProtocol == kMaxSyncProtocol) {
@@ -117,6 +117,7 @@ public:
         p.kmRate = o.value(QStringLiteral("km_rate")).toDouble();
       }
       p.active = o.value(QStringLiteral("active")).toBool();
+      p.isDefault = o.value(QStringLiteral("is_default")).toBool();
       out.push_back(p);
     }
     return out;
@@ -127,17 +128,15 @@ public:
                    QJsonDocument(body).toJson(QJsonDocument::Compact));
   }
 
-  RemoteReport createReport(const Report &r, qint64 serverProjectId) {
+  RemoteReport createReport(const Report &r) {
     return readRemote(request(QStringLiteral("POST"),
-                              QStringLiteral("/api/reports"),
-                              payload(r, serverProjectId)));
+                              QStringLiteral("/api/reports"), payload(r)));
   }
 
-  RemoteReport updateReport(qint64 serverId, const Report &r,
-                            qint64 serverProjectId) {
+  RemoteReport updateReport(qint64 serverId, const Report &r) {
     return readRemote(request(QStringLiteral("PUT"),
                               QStringLiteral("/api/reports/%1").arg(serverId),
-                              payload(r, serverProjectId)));
+                              payload(r)));
   }
 
   void deleteReport(qint64 serverId) {
@@ -152,6 +151,7 @@ public:
     QDateTime start;
     std::optional<QDateTime> stop;
     QString comment;
+    std::vector<ReportLine> lines;
     QDateTime modified;
     qint64 seq = 0;
     int deleted = 0;
@@ -184,6 +184,23 @@ public:
         r.stop = parseTime(stop);
       }
       r.comment = o.value(QStringLiteral("comment")).toString();
+      const QJsonArray lines = o.value(QStringLiteral("lines")).toArray();
+      for (const auto &lv : lines) {
+        const QJsonObject lo = lv.toObject();
+        ReportLine ln;
+        ln.projectId = static_cast<qint64>(
+            lo.value(QStringLiteral("project_id")).toDouble());
+        ln.comment = lo.value(QStringLiteral("comment")).toString();
+        if (ln.projectId > 0) {
+          r.lines.push_back(ln);
+        }
+      }
+      if (r.lines.empty() && r.projectId > 0) {
+        ReportLine ln;
+        ln.projectId = r.projectId;
+        ln.comment = r.comment;
+        r.lines.push_back(ln);
+      }
       r.modified = parseTime(o.value(QStringLiteral("modified")).toString());
       r.seq = static_cast<qint64>(o.value(QStringLiteral("seq")).toDouble());
       r.deleted = o.value(QStringLiteral("deleted")).toInt();
@@ -194,12 +211,24 @@ public:
   }
 
 private:
-  static QByteArray payload(const Report &r, qint64 serverProjectId) {
+  static QByteArray payload(const Report &r) {
     QJsonObject o;
-    o.insert(QStringLiteral("project_id"),
-             static_cast<double>(serverProjectId));
+    o.insert(QStringLiteral("project_id"), static_cast<double>(r.projectId));
     o.insert(QStringLiteral("start"), formatTime(r.start));
     o.insert(QStringLiteral("comment"), r.comment);
+    QJsonArray lines;
+    const std::vector<ReportLine> stored =
+        r.lines.empty() && r.projectId > 0
+            ? std::vector<ReportLine>{{r.projectId, r.comment}}
+            : r.lines;
+    for (const ReportLine &ln : stored) {
+      QJsonObject lo;
+      lo.insert(QStringLiteral("project_id"),
+                static_cast<double>(ln.projectId));
+      lo.insert(QStringLiteral("comment"), ln.comment);
+      lines.append(lo);
+    }
+    o.insert(QStringLiteral("lines"), lines);
     o.insert(QStringLiteral("deleted"), r.deleted);
     o.insert(QStringLiteral("stop"), r.stop ? formatTime(*r.stop) : QString());
     if (r.userId > 0) {
@@ -477,17 +506,30 @@ SyncResult Engine::syncCatalog() {
 void Engine::pullCatalog() {
   const Config cfg = settings_.get();
   Api api(cfg.serverUrl, cfg.username, cfg.password, cfg.networkTimeoutMs());
-  for (const Customer &c : api.listCustomers()) {
+  const auto customers = api.listCustomers();
+  std::vector<qint64> customerServerIds;
+  customerServerIds.reserve(customers.size());
+  for (const Customer &c : customers) {
     store_.upsertCustomerByServerId(c);
+    if (c.serverId > 0) {
+      customerServerIds.push_back(c.serverId);
+    }
   }
-  store_.deleteLocalOnlyCustomers();
+  const qint64 droppedCustomers =
+      store_.deleteCustomersExceptServerIds(customerServerIds);
   std::vector<std::pair<qint64, qint64>> serverToLocal;
   for (const Customer &c : store_.listCustomers(false)) {
     if (c.serverId > 0) {
       serverToLocal.emplace_back(c.serverId, c.id);
     }
   }
-  for (Project p : api.listProjects()) {
+  const auto projects = api.listProjects();
+  std::vector<qint64> projectServerIds;
+  projectServerIds.reserve(projects.size());
+  for (Project p : projects) {
+    if (p.serverId > 0) {
+      projectServerIds.push_back(p.serverId);
+    }
     qint64 local = 0;
     for (const auto &[sid, lid] : serverToLocal) {
       if (sid == p.customerId) {
@@ -503,7 +545,12 @@ void Engine::pullCatalog() {
     p.customerId = local;
     store_.upsertProjectByServerId(p);
   }
-  store_.deleteLocalOnlyProjects();
+  const qint64 droppedProjects =
+      store_.deleteProjectsExceptServerIds(projectServerIds);
+  if (droppedCustomers > 0 || droppedProjects > 0) {
+    qInfo() << "catalog removed" << droppedCustomers << "customers and"
+            << droppedProjects << "projects the server no longer has";
+  }
 }
 
 Engine::PushStats Engine::pushOps() {
@@ -520,13 +567,23 @@ Engine::PushStats Engine::pushOps() {
       deletes.append(static_cast<double>(op.report.serverId));
       continue;
     }
-    const qint64 srvProj = store_.serverProjectId(op.report.projectId);
+    const Report mapped = serverReport(op.report);
     QJsonObject item;
-    item.insert(QStringLiteral("project_id"), static_cast<double>(srvProj));
-    item.insert(QStringLiteral("start"), formatTime(op.report.start));
-    item.insert(QStringLiteral("comment"), op.report.comment);
+    item.insert(QStringLiteral("project_id"),
+                static_cast<double>(mapped.projectId));
+    item.insert(QStringLiteral("start"), formatTime(mapped.start));
+    item.insert(QStringLiteral("comment"), mapped.comment);
+    QJsonArray lines;
+    for (const ReportLine &ln : mapped.lines) {
+      QJsonObject lo;
+      lo.insert(QStringLiteral("project_id"),
+                static_cast<double>(ln.projectId));
+      lo.insert(QStringLiteral("comment"), ln.comment);
+      lines.append(lo);
+    }
+    item.insert(QStringLiteral("lines"), lines);
     item.insert(QStringLiteral("stop"),
-                op.report.stop ? formatTime(*op.report.stop) : QString());
+                mapped.stop ? formatTime(*mapped.stop) : QString());
     if (op.kind == OpKind::Create) {
       item.insert(QStringLiteral("client_uuid"), op.report.clientUuid);
       if (op.report.userId > 0) {
@@ -561,15 +618,13 @@ Engine::PushStats Engine::pushOps() {
         store_.hardDeleteReport(op.report.id);
         stats.deletes++;
       } else if (op.kind == OpKind::Create) {
-        const auto out = api.createReport(
-            op.report, store_.serverProjectId(op.report.projectId));
+        const auto out = api.createReport(serverReport(op.report));
         store_.markReportSynced(op.report.id, out.id, out.seq, out.userId,
                                 out.modified);
         stats.creates++;
       } else {
         const auto out =
-            api.updateReport(op.report.serverId, op.report,
-                             store_.serverProjectId(op.report.projectId));
+            api.updateReport(op.report.serverId, serverReport(op.report));
         const qint64 seq = out.seq == 0 ? op.report.seq : out.seq;
         const qint64 user = out.userId == 0 ? op.report.userId : out.userId;
         const QDateTime mod = out.modified.isValid()
@@ -646,6 +701,21 @@ Engine::PullStats Engine::pullReports() {
       r.serverId = srv.id;
       r.userId = srv.userId;
       r.projectId = mapServerProject(srv.projectId);
+      for (const ReportLine &ln : srv.lines) {
+        ReportLine local = ln;
+        local.projectId = mapServerProject(ln.projectId);
+        if (local.projectId > 0) {
+          r.lines.push_back(local);
+        }
+      }
+      if (r.lines.empty() && r.projectId > 0) {
+        r.lines.push_back(ReportLine{r.projectId, srv.comment});
+      }
+      const qint64 lineProject =
+          r.lines.empty() ? r.projectId : r.lines.front().projectId;
+      if (auto p = store_.getProject(lineProject)) {
+        r.customerId = p->customerId;
+      }
       r.start = srv.start;
       r.stop = srv.stop;
       r.comment = srv.comment;
@@ -674,6 +744,20 @@ Engine::PullStats Engine::pullReports() {
     store_.setLastSeq(high);
   }
   return stats;
+}
+
+Report Engine::serverReport(const Report &local) const {
+  Report out = local;
+  if (out.projectId > 0) {
+    out.projectId = store_.serverProjectId(out.projectId);
+  }
+  if (out.lines.empty() && local.projectId > 0) {
+    out.lines.push_back(ReportLine{out.projectId, out.comment});
+  }
+  for (ReportLine &ln : out.lines) {
+    ln.projectId = store_.serverProjectId(ln.projectId);
+  }
+  return out;
 }
 
 qint64 Engine::mapServerProject(qint64 serverProjectId) {

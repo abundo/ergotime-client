@@ -8,6 +8,7 @@
 #include <QDateEdit>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QHash>
 #include <QHeaderView>
 #include <QLabel>
 #include <QListWidget>
@@ -194,13 +195,7 @@ void MainWindow::buildUi() {
   customers_->setToolTip(
       QStringLiteral("Recently used customers appear at the top"));
   custCol->addWidget(customers_, 1);
-  auto *projCol = new QVBoxLayout;
-  projCol->addWidget(new QLabel(QStringLiteral("Project")));
-  projects_ = new QListWidget;
-  projects_->setFixedWidth(200);
-  projCol->addWidget(projects_, 1);
   lists->addLayout(custCol);
-  lists->addLayout(projCol);
   left->addLayout(lists, 1);
   auto *buttons = new QHBoxLayout;
   startBtn_ = new QPushButton(QStringLiteral("Start"));
@@ -216,10 +211,19 @@ void MainWindow::buildUi() {
   trackLay->addLayout(left);
   auto *commentBox = new QGroupBox(QStringLiteral("Comment"));
   auto *commentLay = new QVBoxLayout(commentBox);
-  comment_ = new QTextEdit;
-  comment_->setAcceptRichText(false);
-  comment_->setPlaceholderText(QStringLiteral("What are you working on?"));
-  comment_->setEnabled(false);
+  comment_ = new QTableWidget(0, 2);
+  comment_->setHorizontalHeaderLabels(
+      {QStringLiteral("Project"), QStringLiteral("Comment")});
+  comment_->horizontalHeader()->setSectionResizeMode(
+      0, QHeaderView::ResizeToContents);
+  comment_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+  comment_->verticalHeader()->setVisible(false);
+  comment_->setSelectionBehavior(QAbstractItemView::SelectRows);
+  comment_->setSelectionMode(QAbstractItemView::SingleSelection);
+  configureProjectCommentTable(comment_);
+  comment_->setToolTip(QStringLiteral(
+      "The highlighted project is used when every comment is empty. "
+      "Comments on several projects share this interval."));
   commentLay->addWidget(comment_);
   trackLay->addWidget(commentBox, 1);
   topLay->addWidget(track, 1);
@@ -307,10 +311,12 @@ void MainWindow::buildUi() {
             }
           });
 
-  connect(customers_, &QListWidget::currentRowChanged, this,
-          [this](int) { refreshProjects(); });
-  connect(startBtn_, &QPushButton::clicked, this,
-          [this] { startProject(selectedId(projects_)); });
+  connect(customers_, &QListWidget::currentRowChanged, this, [this](int) {
+    if (!listsLocked_) {
+      fillCommentTable(selectedId(customers_), 0);
+    }
+  });
+  connect(startBtn_, &QPushButton::clicked, this, [this] { beginTracking(); });
   connect(stopBtn_, &QPushButton::clicked, &tracker_, &Tracker::stop);
   connect(syncCat, &QPushButton::clicked, this, &MainWindow::syncCatalogNow);
   connect(syncRep, &QPushButton::clicked, this, &MainWindow::syncNow);
@@ -375,11 +381,17 @@ void MainWindow::buildUi() {
   };
   connect(editBtn, &QPushButton::clicked, this, editCurrent);
   connect(table_, &QTableWidget::itemDoubleClicked, this, editCurrent);
-  connect(comment_, &QTextEdit::textChanged, this, [this] {
+  connect(comment_, &QTableWidget::itemChanged, this, [this] {
     if (!commentEdit_) {
-      tracker_.setComment(comment_->toPlainText());
+      pushDraft();
     }
   });
+  connect(comment_, &QTableWidget::currentCellChanged, this,
+          [this](int, int, int, int) {
+            if (!commentEdit_) {
+              pushDraft();
+            }
+          });
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
@@ -470,18 +482,94 @@ void MainWindow::startProject(qint64 id) {
     if (!project) {
       return;
     }
-    tracker_.start(*project);
-    if (project->customerId > 0) {
-      settings_.touchRecentCustomer(project->customerId);
-      refreshCatalog();
+    for (int i = 0; i < customers_->count(); ++i) {
+      if (itemId(customers_->item(i)) == project->customerId) {
+        customers_->setCurrentRow(i);
+        break;
+      }
     }
-    commentEdit_ = true;
-    comment_->clear();
-    commentEdit_ = false;
+    fillCommentTable(project->customerId, id);
+    beginTracking();
   } catch (const std::exception &ex) {
     QMessageBox::warning(this, QStringLiteral("Start"),
                          QString::fromUtf8(ex.what()));
   }
+}
+
+void MainWindow::beginTracking() {
+  const qint64 custId = selectedId(customers_);
+  std::vector<Project> projects;
+  try {
+    projects = store_.listProjects(custId, false);
+  } catch (const std::exception &ex) {
+    QMessageBox::warning(this, QStringLiteral("Start"),
+                         QString::fromUtf8(ex.what()));
+    return;
+  }
+  std::vector<ReportLine> rows;
+  qint64 anchor = 0;
+  const int current = comment_->currentRow();
+  for (int i = 0; i < comment_->rowCount(); ++i) {
+    const auto *name = comment_->item(i, 0);
+    const auto *text = comment_->item(i, 1);
+    if (!name) {
+      continue;
+    }
+    ReportLine ln;
+    ln.projectId = name->data(Qt::UserRole).toLongLong();
+    ln.comment = text ? text->text() : QString();
+    rows.push_back(ln);
+    if (i == current) {
+      anchor = ln.projectId;
+    }
+  }
+  Report draft;
+  if (!assignReportLines(draft, projects, rows, anchor)) {
+    QMessageBox::warning(
+        this, QStringLiteral("Start"),
+        QStringLiteral("Select a customer that has a project."));
+    return;
+  }
+  tracker_.start(draft);
+  if (draft.customerId > 0) {
+    settings_.touchRecentCustomer(draft.customerId);
+    refreshCatalog();
+  }
+}
+
+void MainWindow::pushDraft() {
+  if (tracker_.state() != TrackerState::Active) {
+    return;
+  }
+  const qint64 custId = listsLocked_ ? lockedCust_ : selectedId(customers_);
+  std::vector<Project> projects;
+  try {
+    projects = store_.listProjects(custId, false);
+  } catch (const std::exception &) {
+    return;
+  }
+  std::vector<ReportLine> rows;
+  qint64 anchor = 0;
+  const int current = comment_->currentRow();
+  for (int i = 0; i < comment_->rowCount(); ++i) {
+    const auto *name = comment_->item(i, 0);
+    const auto *text = comment_->item(i, 1);
+    if (!name) {
+      continue;
+    }
+    ReportLine ln;
+    ln.projectId = name->data(Qt::UserRole).toLongLong();
+    ln.comment = text ? text->text() : QString();
+    rows.push_back(ln);
+    if (i == current) {
+      anchor = ln.projectId;
+    }
+  }
+  Report draft;
+  if (!assignReportLines(draft, projects, rows, anchor)) {
+    return;
+  }
+  tracker_.setDraft(draft);
 }
 
 void MainWindow::setTrackerState(TrackerState state) {
@@ -490,18 +578,23 @@ void MainWindow::setTrackerState(TrackerState state) {
   const bool active = state == TrackerState::Active;
   startBtn_->setEnabled(!active);
   stopBtn_->setEnabled(active);
-  comment_->setEnabled(active);
   customers_->setEnabled(true);
-  projects_->setEnabled(true);
   listsLocked_ = active;
   if (active) {
     lockedCust_ = selectedId(customers_);
-    lockedProj_ = selectedId(projects_);
+    lockedProj_ = 0;
+    if (comment_->currentRow() >= 0 &&
+        comment_->item(comment_->currentRow(), 0)) {
+      lockedProj_ = comment_->item(comment_->currentRow(), 0)
+                        ->data(Qt::UserRole)
+                        .toLongLong();
+    }
   } else {
     lockedCust_ = 0;
     lockedProj_ = 0;
     lengthLabel_->setText(QStringLiteral("Duration: —"));
     idleLabel_->setText(QStringLiteral("Idle: —"));
+    fillCommentTable(selectedId(customers_), 0);
   }
   const QIcon icon = stateIcon(state);
   setWindowIcon(icon);
@@ -578,44 +671,61 @@ void MainWindow::refreshCatalog() {
     }
   }
   customers_->blockSignals(false);
-  refreshProjects();
+  const qint64 shown =
+      listsLocked_ && lockedCust_ > 0 ? lockedCust_ : selectedId(customers_);
+  fillCommentTable(shown, listsLocked_ ? lockedProj_ : 0);
   rebuildTray();
 }
 
-void MainWindow::refreshProjects() {
-  qint64 prev = selectedId(projects_);
-  if (listsLocked_ && lockedProj_ > 0) {
-    prev = lockedProj_;
+void MainWindow::fillCommentTable(qint64 customerId, qint64 anchorId) {
+  commentEdit_ = true;
+  QHash<qint64, QString> previous;
+  if (listsLocked_) {
+    for (int i = 0; i < comment_->rowCount(); ++i) {
+      const auto *name = comment_->item(i, 0);
+      const auto *text = comment_->item(i, 1);
+      if (name) {
+        previous.insert(name->data(Qt::UserRole).toLongLong(),
+                        text ? text->text() : QString());
+      }
+    }
   }
-  qint64 custId = selectedId(customers_);
-  if (listsLocked_ && lockedCust_ > 0) {
-    custId = lockedCust_;
-  }
-  projects_->blockSignals(true);
-  projects_->clear();
-  if (custId > 0) {
+  comment_->setRowCount(0);
+  if (customerId > 0) {
     try {
-      for (const Project &p : store_.listProjects(custId, true)) {
-        addItem(projects_, p.name, p.id);
+      const auto projects = store_.listProjects(customerId, true);
+      comment_->setRowCount(static_cast<int>(projects.size()));
+      int select = 0;
+      bool picked = false;
+      for (int i = 0; i < static_cast<int>(projects.size()); ++i) {
+        const Project &p = projects[static_cast<size_t>(i)];
+        auto *name = new QTableWidgetItem(
+            p.isDefault ? p.name + QStringLiteral(" (default)") : p.name);
+        name->setData(Qt::UserRole, static_cast<qlonglong>(p.id));
+        name->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        name->setTextAlignment(Qt::AlignLeft | Qt::AlignTop);
+        comment_->setItem(i, 0, name);
+        auto *text = new QTableWidgetItem(previous.value(p.id));
+        text->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable |
+                       Qt::ItemIsEditable);
+        text->setTextAlignment(Qt::AlignLeft | Qt::AlignTop);
+        comment_->setItem(i, 1, text);
+        if (!picked && anchorId > 0 && p.id == anchorId) {
+          select = i;
+          picked = true;
+        } else if (!picked && anchorId <= 0 && p.isDefault) {
+          select = i;
+          picked = true;
+        }
+      }
+      if (comment_->rowCount() > 0) {
+        comment_->setCurrentCell(select, 1);
       }
     } catch (const std::exception &ex) {
       qWarning() << ex.what();
     }
   }
-  bool picked = false;
-  if (prev > 0) {
-    for (int i = 0; i < projects_->count(); ++i) {
-      if (itemId(projects_->item(i)) == prev) {
-        projects_->setCurrentRow(i);
-        picked = true;
-        break;
-      }
-    }
-  }
-  if (!picked && projects_->count() > 0) {
-    projects_->setCurrentRow(0);
-  }
-  projects_->blockSignals(false);
+  commentEdit_ = false;
 }
 
 void MainWindow::refreshReports() {
@@ -649,14 +759,41 @@ void MainWindow::refreshReports() {
     const QString stop =
         r.stop ? r.stop->toLocalTime().toString(QStringLiteral("HH:mm"))
                : QStringLiteral("…");
-    const qint64 custId = store_.projectCustomerLocalId(r.projectId);
+    qint64 custId = r.customerId;
+    if (custId <= 0) {
+      custId = store_.projectCustomerLocalId(r.projectId);
+    }
     QString cust = nameOf(custNames, custId);
     if (cust.isEmpty() && custId > 0) {
       cust = QStringLiteral("#%1").arg(custId);
     }
-    QString proj = nameOf(projNames, r.projectId);
-    if (proj.isEmpty()) {
-      proj = QStringLiteral("#%1").arg(r.projectId);
+    QStringList projParts;
+    const std::vector<ReportLine> lines =
+        r.lines.empty() ? std::vector<ReportLine>{{r.projectId, r.comment}}
+                        : r.lines;
+    for (const ReportLine &ln : lines) {
+      QString name = nameOf(projNames, ln.projectId);
+      if (name.isEmpty()) {
+        name = QStringLiteral("#%1").arg(ln.projectId);
+      }
+      projParts << name;
+    }
+    const QString proj = projParts.join(QStringLiteral(", "));
+    QString commentText = r.comment;
+    if (lines.size() > 1) {
+      commentText.clear();
+      for (size_t n = 0; n < lines.size(); ++n) {
+        if (n > 0) {
+          commentText += QStringLiteral("\n\n");
+        }
+        commentText += projParts.at(static_cast<int>(n));
+        if (!lines[n].comment.trimmed().isEmpty()) {
+          commentText += QLatin1Char('\n');
+          commentText += lines[n].comment;
+        }
+      }
+    } else if (!lines.empty()) {
+      commentText = lines[0].comment;
     }
     const qint64 dur = r.durationMs(now);
     if (r.stop) {
@@ -683,9 +820,9 @@ void MainWindow::refreshReports() {
     table_->setItem(i, 3, new QTableWidgetItem(proj));
     table_->setItem(i, 4, new QTableWidgetItem(formatDurationHm(dur)));
     table_->setItem(i, 5, new QTableWidgetItem(flags));
-    auto *commentItem = new QTableWidgetItem(r.comment);
-    if (!r.comment.isEmpty()) {
-      commentItem->setToolTip(r.comment);
+    auto *commentItem = new QTableWidgetItem(commentText);
+    if (!commentText.isEmpty()) {
+      commentItem->setToolTip(commentText);
     }
     table_->setItem(i, 6, commentItem);
   }

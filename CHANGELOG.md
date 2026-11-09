@@ -6,10 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed
+
+- Catalog sync removes customers and projects the server no longer returns. A report line on a removed project keeps its text on a project that remains, so the time entry can still be pushed.
+
+### Changed
+
+- A report is a customer and a time range. The comment area is a table of that customer's projects. The default project is preselected. Comments on several projects share the one interval. Comments on a single project keep the whole interval on that project.
+- Sync protocol is 2. Protocol 1 servers are refused, because a report can now carry several project comments.
+
 ### Added
 
 - Static release binaries are stripped and packed with UPX, so the download stays an executable. Linux, Windows, and macOS builds all go through `scripts/pack-upx.sh`.
-- Sync refuses to pull or push unless `/healthz` advertises sync protocol 1. A missing number or any other number stops the sync before catalog or report changes, with a message naming the protocol this client speaks.
+- Sync refuses to pull or push unless `/healthz` advertises sync protocol 2. A missing number or any other number stops the sync before catalog or report changes, with a message naming the protocol this client speaks.
 - Linux idle detection through Wayland `ext-idle-notifier-v1` (KWin, Sway, Hyprland, niri, labwc, river). The client tries this before GNOME Mutter `IdleMonitor` and `org.freedesktop.ScreenSaver`. Version 2 of the protocol uses input idle, so a video idle inhibitor does not keep a running report open.
 
 ## [1.0.0] - 2026-11-09

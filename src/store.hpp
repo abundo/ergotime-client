@@ -39,13 +39,16 @@ public:
   std::optional<Customer> getCustomer(qint64 id);
   std::optional<Customer> getCustomerByServerId(qint64 serverId);
   void upsertCustomerByServerId(const Customer &c);
-  qint64 deleteLocalOnlyCustomers();
+  // keep is the server ids just returned. Any other customer row is removed.
+  qint64 deleteCustomersExceptServerIds(const std::vector<qint64> &keep);
 
   std::vector<Project> listProjects(qint64 customerId, bool activeOnly);
   std::optional<Project> getProject(qint64 id);
   std::optional<Project> getProjectByServerId(qint64 serverId);
   void upsertProjectByServerId(const Project &p);
-  qint64 deleteLocalOnlyProjects();
+  // keep is the server ids just returned. Any other project row is removed.
+  // Report lines on a removed project are folded onto a project that remains.
+  qint64 deleteProjectsExceptServerIds(const std::vector<qint64> &keep);
   qint64 serverProjectId(qint64 localId);
   std::vector<std::pair<qint64, QString>> projectNames();
   std::vector<std::pair<qint64, QString>> customerNames();

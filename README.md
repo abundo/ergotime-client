@@ -10,7 +10,7 @@ Desktop time tracker. It uses the same data directory as the Go client, `~/.ergo
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | UI       | Qt 6 Widgets, including the system tray                                                                                                  |
 | Local DB | SQLite through `Qt Sql` (`QSQLITE`)                                                                                                      |
-| Sync     | `Qt Network`, HTTP Basic Auth. Sync runs only when `/healthz` advertises protocol 1.                                                     |
+| Sync     | `Qt Network`, HTTP Basic Auth. Sync runs only when `/healthz` advertises protocol 2.                                                     |
 | Idle     | Linux: Wayland `ext-idle-notifier-v1`, then GNOME Mutter `IdleMonitor`, then `org.freedesktop.ScreenSaver`. Windows: `GetLastInputInfo`. |
 
 On Linux the Wayland backend covers KWin, Sway, Hyprland, niri, labwc, and river. It subscribes to input idle (`get_input_idle_notification` when the compositor offers version 2) with a 500 ms threshold and reconstructs idle time from the `idled` and `resumed` events. GNOME Mutter does not implement that protocol, so the client falls back to Mutter `IdleMonitor`, then `org.freedesktop.ScreenSaver`. If none of those probes succeed, idle time stays at zero and the idle timeout does not stop a running report. macOS idle time stays at zero.

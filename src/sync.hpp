@@ -55,6 +55,7 @@ private:
   PushStats pushOps();
   PullStats pullReports();
   qint64 mapServerProject(qint64 serverProjectId);
+  Report serverReport(const Report &local) const;
 
   Store &store_;
   Settings &settings_;
