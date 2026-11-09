@@ -4,14 +4,14 @@ Official desktop client. Release notes are in [CHANGELOG.md](CHANGELOG.md). Lice
 
 Desktop time tracker. It uses the same data directory as the Go client, `~/.ergotime2`, including `config.json` and `ergotime.db`, and the same HTTP sync protocol.
 
-| Layer    | Technology                                                                                          |
-| -------- | --------------------------------------------------------------------------------------------------- |
-| UI       | Qt 6 Widgets, including the system tray                                                             |
-| Local DB | SQLite through `Qt Sql` (`QSQLITE`)                                                                 |
-| Sync     | `Qt Network`, HTTP Basic Auth                                                                       |
-| Idle     | Linux: GNOME Mutter `IdleMonitor`, then `org.freedesktop.ScreenSaver`. Windows: `GetLastInputInfo`. |
+| Layer    | Technology                                                                                                                               |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| UI       | Qt 6 Widgets, including the system tray                                                                                                  |
+| Local DB | SQLite through `Qt Sql` (`QSQLITE`)                                                                                                      |
+| Sync     | `Qt Network`, HTTP Basic Auth. Sync runs only when `/healthz` advertises protocol 1.                                                     |
+| Idle     | Linux: Wayland `ext-idle-notifier-v1`, then GNOME Mutter `IdleMonitor`, then `org.freedesktop.ScreenSaver`. Windows: `GetLastInputInfo`. |
 
-The Wayland `ext-idle-notifier-v1` backend from the Go client is not in this port. On a desktop where neither D-Bus probe succeeds, idle time stays at zero and the idle timeout does not stop a running report.
+On Linux the Wayland backend covers KWin, Sway, Hyprland, niri, labwc, and river. It subscribes to input idle (`get_input_idle_notification` when the compositor offers version 2) with a 500 ms threshold and reconstructs idle time from the `idled` and `resumed` events. GNOME Mutter does not implement that protocol, so the client falls back to Mutter `IdleMonitor`, then `org.freedesktop.ScreenSaver`. If none of those probes succeed, idle time stays at zero and the idle timeout does not stop a running report. macOS idle time stays at zero.
 
 ## Build
 

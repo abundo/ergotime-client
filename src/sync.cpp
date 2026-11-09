@@ -18,6 +18,41 @@
 
 namespace {
 
+// Spoken desktop sync contract. Widen the range when this client can
+// still talk to an older or newer server. Bump it only for a break:
+// a removed or redefined field, a new timestamp format, or a new auth scheme.
+constexpr int kMinSyncProtocol = 1;
+constexpr int kMaxSyncProtocol = 1;
+
+QString syncProtocolRange() {
+  if (kMinSyncProtocol == kMaxSyncProtocol) {
+    return QStringLiteral("protocol %1").arg(kMinSyncProtocol);
+  }
+  return QStringLiteral("protocols %1-%2")
+      .arg(kMinSyncProtocol)
+      .arg(kMaxSyncProtocol);
+}
+
+void requireSyncProtocol(const QJsonDocument &doc) {
+  const QJsonObject o = doc.object();
+  const QJsonValue v = o.value(QStringLiteral("protocol"));
+  if (!o.contains(QStringLiteral("protocol")) || !v.isDouble()) {
+    throw std::runtime_error(
+        QStringLiteral(
+            "server did not advertise a sync protocol; this client speaks %1")
+            .arg(syncProtocolRange())
+            .toStdString());
+  }
+  const int protocol = v.toInt();
+  if (protocol < kMinSyncProtocol || protocol > kMaxSyncProtocol) {
+    throw std::runtime_error(
+        QStringLiteral("server protocol %1; this client speaks %2")
+            .arg(protocol)
+            .arg(syncProtocolRange())
+            .toStdString());
+  }
+}
+
 struct RemoteReport {
   qint64 id = 0;
   qint64 userId = 0;
@@ -41,7 +76,8 @@ public:
         timeoutMs_(timeoutMs) {}
 
   void health() {
-    request(QStringLiteral("GET"), QStringLiteral("/healthz"), QByteArray());
+    requireSyncProtocol(request(QStringLiteral("GET"),
+                                QStringLiteral("/healthz"), QByteArray()));
   }
 
   std::vector<Customer> listCustomers() {

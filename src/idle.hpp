@@ -5,8 +5,8 @@
 #include <memory>
 
 // Idle reports how long the session has been without input, in milliseconds.
-// Linux uses GNOME Mutter IdleMonitor, then org.freedesktop.ScreenSaver.
-// The Wayland ext-idle-notifier backend from the Go client is not ported.
+// Linux tries Wayland ext-idle-notifier-v1, then GNOME Mutter IdleMonitor,
+// then org.freedesktop.ScreenSaver. Windows uses GetLastInputInfo.
 class Idle {
 public:
   virtual ~Idle() = default;
