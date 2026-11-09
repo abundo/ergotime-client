@@ -1,0 +1,137 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: "6.12.0"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  linux:
+    name: linux amd64 static
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache static Qt
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.qt-cache/static/${{ env.QT_VERSION }}
+            ${{ github.workspace }}/.qt-cache/src/qtbase-everywhere-src-${{ env.QT_VERSION }}.tar.xz
+          key: qt-static-linux-${{ env.QT_VERSION }}-${{ hashFiles('scripts/install-qt-static.sh', 'docker/Dockerfile.static') }}
+
+      - name: Build static binary
+        env:
+          CONTAINER_ENGINE: docker
+          QT_ROOT: ${{ github.workspace }}/.qt-cache
+        run: ./scripts/container-build-static.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ergotime-linux-amd64
+          path: build/ergotime-static
+          if-no-files-found: error
+
+  windows:
+    name: windows amd64 static
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache host Qt and MinGW static Qt
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.qt-cache/${{ env.QT_VERSION }}
+            ${{ github.workspace }}/.qt-cache/static/${{ env.QT_VERSION }}-mingw
+            ${{ github.workspace }}/.qt-cache/src/qtbase-everywhere-src-${{ env.QT_VERSION }}.tar.xz
+          key: qt-static-mingw-${{ env.QT_VERSION }}-${{ hashFiles('scripts/container-build-windows.sh', 'docker/Dockerfile.windows') }}
+
+      - name: Linux Qt host tools (moc)
+        run: |
+          python3 -m pip install --user "aqtinstall>=3.1"
+          python3 -m aqt install-qt linux desktop "${QT_VERSION}" linux_gcc_64 \
+            -O "${GITHUB_WORKSPACE}/.qt-cache" --archives qtbase icu
+
+      - name: Build static exe
+        env:
+          CONTAINER_ENGINE: docker
+          QT_ROOT: ${{ github.workspace }}/.qt-cache
+          QT_HOST_PATH: ${{ github.workspace }}/.qt-cache/${{ env.QT_VERSION }}/gcc_64
+        run: ./scripts/container-build-windows.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ergotime-windows-amd64
+          path: build/ergotime.exe
+          if-no-files-found: error
+
+  macos:
+    name: macos arm64 static
+    runs-on: macos-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: brew install cmake ninja
+
+      - name: Cache static Qt
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.qt-cache/static/${{ env.QT_VERSION }}
+            ${{ github.workspace }}/.qt-cache/src/qtbase-everywhere-src-${{ env.QT_VERSION }}.tar.xz
+          key: qt-static-macos-${{ env.QT_VERSION }}-${{ hashFiles('scripts/install-qt-static.sh') }}
+
+      - name: Build static Qt and client
+        env:
+          QT_ROOT: ${{ github.workspace }}/.qt-cache
+          QT_STATIC_PREFIX: ${{ github.workspace }}/.qt-cache/static/${{ env.QT_VERSION }}
+        run: |
+          ./scripts/install-qt-static.sh
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DERGOTIME_STATIC=ON \
+            -DQT_STATIC_PREFIX="$QT_STATIC_PREFIX"
+          cmake --build build --parallel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ergotime-macos-arm64
+          path: build/ergotime
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/*/* \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Static desktop builds for Linux x86_64, Windows x86_64, and macOS Apple Silicon. See CHANGELOG.md."

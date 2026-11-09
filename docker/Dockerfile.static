@@ -1,0 +1,53 @@
+# Linux toolchain for a static Qt 6.12 qtbase and the ErgoTime C++ client.
+# scripts/container-build-static.sh builds and runs this image.
+FROM docker.io/library/fedora:44
+
+RUN dnf install -y -q --setopt=install_weak_deps=False \
+        cmake \
+        ninja-build \
+        gcc-c++ \
+        libstdc++-static \
+        perl \
+        python3 \
+        curl \
+        ca-certificates \
+        xz \
+        tar \
+        git \
+        make \
+        pkgconf-pkg-config \
+        which \
+        binutils \
+        openssl-devel \
+        libX11-devel \
+        libXext-devel \
+        libxkbcommon-devel \
+        libxkbcommon-x11-devel \
+        fontconfig-devel \
+        freetype-devel \
+        libxcb-devel \
+        xcb-util-devel \
+        xcb-util-image-devel \
+        xcb-util-keysyms-devel \
+        xcb-util-renderutil-devel \
+        xcb-util-wm-devel \
+        xcb-util-cursor-devel \
+        libXrender-devel \
+        libXi-devel \
+        libXcursor-devel \
+        libXfixes-devel \
+        libXrandr-devel \
+        mesa-libGL-devel \
+        mesa-libEGL-devel \
+        dbus-devel \
+        glib2-devel \
+        pcre2-devel \
+        libpng-devel \
+        zlib-devel \
+        harfbuzz-devel \
+        brotli-devel \
+        wayland-devel \
+        wayland-protocols-devel \
+    && dnf clean all
+
+WORKDIR /src
