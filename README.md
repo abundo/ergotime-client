@@ -4,6 +4,8 @@ Official desktop client. Release notes are in [CHANGELOG.md](CHANGELOG.md). Lice
 
 Desktop time tracker. It uses the same data directory as the Go client, `~/.ergotime2`, including `config.json` and `ergotime.db`, and the same HTTP sync protocol.
 
+![ErgoTime desktop client](docs/main-window.png)
+
 | Layer    | Technology                                                                                                                               |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | UI       | Qt 6 Widgets, including the system tray                                                                                                  |
