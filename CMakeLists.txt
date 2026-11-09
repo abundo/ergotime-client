@@ -76,6 +76,9 @@ if(ERGOTIME_STATIC OR _qtcore_type STREQUAL "STATIC_LIBRARY")
     if(UNIX AND NOT APPLE)
         target_link_options(ergotime PRIVATE -static-libgcc -static-libstdc++)
     endif()
+    add_custom_command(TARGET ergotime POST_BUILD
+        COMMAND "${CMAKE_SOURCE_DIR}/scripts/pack-upx.sh" "$<TARGET_FILE:ergotime>"
+        VERBATIM)
 endif()
 
 # The linux_gcc_64 kit links ICU from the same prefix (aqt archive "icu").

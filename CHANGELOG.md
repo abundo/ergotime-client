@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Added
 
+- Static release binaries are stripped and packed with UPX, so the download stays an executable. Linux, Windows, and macOS builds all go through `scripts/pack-upx.sh`.
 - Sync refuses to pull or push unless `/healthz` advertises sync protocol 1. A missing number or any other number stops the sync before catalog or report changes, with a message naming the protocol this client speaks.
 - Linux idle detection through Wayland `ext-idle-notifier-v1` (KWin, Sway, Hyprland, niri, labwc, river). The client tries this before GNOME Mutter `IdleMonitor` and `org.freedesktop.ScreenSaver`. Version 2 of the protocol uses input idle, so a video idle inhibitor does not keep a running report open.
 

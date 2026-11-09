@@ -62,6 +62,7 @@ build/ergotime-static: $(SRC) build/static_plugins.cpp | build
 		$(shell python3 scripts/qt-static.py ldflags $(QT_STATIC_PREFIX)) \
 		-static-libgcc -static-libstdc++
 	@if ldd $@ | grep -E 'libQt6|libicu'; then echo 'error: binary still depends on Qt or ICU shared libraries'; exit 1; fi
+	./scripts/pack-upx.sh $@
 
 build/windows_plugins.cpp: $(QT_WINDOWS_PREFIX)/lib/libQt6Core.a scripts/qt-static.py | build
 	NM=$(MINGW_NM) python3 scripts/qt-static.py plugins $(QT_WINDOWS_PREFIX) $@
@@ -74,6 +75,7 @@ build/ergotime.exe: $(SRC) build/windows_plugins.cpp | build
 		$(SRC) $(MOC_SRC) build/windows_plugins.cpp \
 		$(shell NM=$(MINGW_NM) python3 scripts/qt-static.py ldflags $(QT_WINDOWS_PREFIX)) \
 		-mwindows -static-libgcc -static-libstdc++
+	MINGW_STRIP=$(MINGW_CXX:%g++=%strip) ./scripts/pack-upx.sh $@
 
 static: build/ergotime-static
 

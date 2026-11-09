@@ -18,6 +18,7 @@ RUN dnf install -y -q --setopt=install_weak_deps=False \
         pkgconf-pkg-config \
         which \
         binutils \
+        upx \
         openssl-devel \
         libX11-devel \
         libXext-devel \

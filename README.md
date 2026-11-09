@@ -46,6 +46,8 @@ make static              # rebuild the binary once the static Qt exists
 
 `ldd build/ergotime-static` should list system libraries only. The static Qt build includes the Wayland platform plugin as well as XCB, so a Wayland session does not have to fall back to XWayland.
 
+`make static` and `make static-windows` strip the binary and pack it with UPX (`scripts/pack-upx.sh`). The file stays an executable. The macOS CMake build does the same. UPX has to be installed (`upx` on Fedora, `brew install upx` on macOS).
+
 ## Windows cross-compile
 
 A container is the way to cross-compile the Windows binary from Linux. The image holds the MinGW toolchain and a static Qt built with that compiler. The Linux 6.12 kit supplies `moc`. The result is `build/ergotime.exe`, linked against `$HOME/Qt/static/6.12.0-mingw`, and it still uses Windows system DLLs such as `USER32` and `OPENGL32`.
