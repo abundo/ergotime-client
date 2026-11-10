@@ -14,6 +14,7 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStyledItemDelegate>
 #include <QTabWidget>
@@ -370,7 +371,7 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
   QObject::connect(dtStop, &QDateTimeEdit::dateTimeChanged, &dlg, updateLen);
   updateLen();
 
-  auto nudgeRow = [&](QDateTimeEdit *primary, bool both) {
+  auto nudgeRow = [&](QDateTimeEdit *primary, bool shiftBoth) {
     auto *row = new QHBoxLayout;
     row->addWidget(primary);
     const struct {
@@ -379,15 +380,25 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
     } buttons[] = {{"-H", -3600}, {"+H", 3600}, {"-M", -60}, {"+M", 60}};
     for (const auto &b : buttons) {
       auto *btn = new QPushButton(QString::fromUtf8(b.label));
+      // Copy the editor pointers. primary is a parameter of this lambda, so a
+      // reference capture would dangle after nudgeRow returns and crash on
+      // click.
       QObject::connect(
-          btn, &QPushButton::clicked, &dlg, [&, secs = b.secs, both] {
-            dtStart->setDateTime(both ? dtStart->dateTime().addSecs(secs)
-                                      : dtStart->dateTime());
-            if (both) {
-              dtStop->setDateTime(dtStop->dateTime().addSecs(secs));
-            } else {
-              primary->setDateTime(primary->dateTime().addSecs(secs));
+          btn, &QPushButton::clicked, &dlg,
+          [dtStart, dtStop, primary, secs = b.secs, shiftBoth, &updateLen] {
+            const QDateTime start = dtStart->dateTime();
+            const QDateTime stop = dtStop->dateTime();
+            {
+              const QSignalBlocker blockStart(dtStart);
+              const QSignalBlocker blockStop(dtStop);
+              if (shiftBoth) {
+                dtStart->setDateTime(start.addSecs(secs));
+                dtStop->setDateTime(stop.addSecs(secs));
+              } else {
+                primary->setDateTime(primary->dateTime().addSecs(secs));
+              }
             }
+            updateLen();
           });
       row->addWidget(btn);
     }
