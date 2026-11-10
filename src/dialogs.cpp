@@ -184,6 +184,20 @@ void fillCommentTable(QTableWidget *table, Store &store, qint64 customerId,
 
 void configureProjectCommentTable(QTableWidget *table) {
   table->setItemDelegateForColumn(1, new MultilineCommentDelegate(table));
+  // Open the comment editor on one click. SelectedClicked waits out the
+  // double-click interval before editing, and CurrentChanged would open an
+  // editor whenever the highlighted project is selected in code.
+  table->setEditTriggers(QAbstractItemView::EditKeyPressed |
+                         QAbstractItemView::AnyKeyPressed);
+  QObject::connect(table, &QTableWidget::cellClicked, table,
+                   [table](int row, int column) {
+                     if (column != 1) {
+                       return;
+                     }
+                     if (QTableWidgetItem *item = table->item(row, column)) {
+                       table->editItem(item);
+                     }
+                   });
   table->setWordWrap(false);
   table->setTextElideMode(Qt::ElideRight);
   const int oneLine = commentRowHeight(table->fontMetrics(), QString());
