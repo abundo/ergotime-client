@@ -651,6 +651,13 @@ Engine::PushStats Engine::pushOps() {
   for (const auto &v : root.value(QStringLiteral("created")).toArray()) {
     const QJsonObject o = v.toObject();
     const QString uuid = o.value(QStringLiteral("client_uuid")).toString();
+    // An empty id matches every other empty id. Only a real client_uuid may
+    // attach a server row, otherwise one create is marked synced as another.
+    if (uuid.isEmpty()) {
+      qWarning() << "batch create response has no client_uuid; leaving the "
+                    "local report dirty";
+      continue;
+    }
     for (const PendingOp &op : ops) {
       if (op.kind == OpKind::Create && op.report.clientUuid == uuid) {
         store_.markReportSynced(

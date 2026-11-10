@@ -100,9 +100,18 @@ inline QDateTime parseTime(const QString &s) {
   }
   if (!dt.isValid()) {
     dt = QDateTime::fromString(s, QStringLiteral("yyyy-MM-dd HH:mm:ss"));
-    if (dt.isValid()) {
-      dt.setTimeZone(QTimeZone::LocalTime);
-    }
+  }
+  if (!dt.isValid()) {
+    return {};
+  }
+  // Zone-less values are UTC, matching the database. Qt otherwise treats them
+  // as local, which makes the same stored instant compare differently per
+  // machine.
+  const bool zoned = s.endsWith(QLatin1Char('Z')) ||
+                     s.contains(QLatin1Char('+')) ||
+                     s.lastIndexOf(QLatin1Char('-')) > 10;
+  if (!zoned) {
+    dt = QDateTime(dt.date(), dt.time(), QTimeZone::UTC);
   }
   return dt;
 }
