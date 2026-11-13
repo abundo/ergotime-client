@@ -1,8 +1,10 @@
+#include "groupboxstyle.hpp"
 #include "mainwindow.hpp"
 
 #include "version.hpp"
 
 #include <QApplication>
+#include <QStyleFactory>
 
 #include <exception>
 #include <iostream>
@@ -15,6 +17,9 @@ int main(int argc, char *argv[]) {
   QApplication::setOrganizationDomain(QStringLiteral("abundo.se"));
   QApplication::setDesktopFileName(QStringLiteral("ergotime"));
   QApplication::setQuitOnLastWindowClosed(false);
+  // Own a new base style. setStyle deletes the style it replaces.
+  const QString styleKey = app.style()->objectName();
+  app.setStyle(new GroupBoxTitleStyle(QStyleFactory::create(styleKey)));
   installLogSink();
 
   try {
