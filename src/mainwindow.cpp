@@ -8,9 +8,11 @@
 #include <QApplication>
 #include <QCalendarWidget>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QDateEdit>
 #include <QDateTimeEdit>
+#include <QFontDatabase>
 #include <QHash>
 #include <QHeaderView>
 #include <QLabel>
@@ -20,14 +22,16 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
+#include <QScrollBar>
+#include <QShortcut>
 #include <QSignalBlocker>
 #include <QSplitter>
-#include <QStatusBar>
 #include <QTableWidget>
 #include <QThread>
 #include <QTimeZone>
 #include <QTimer>
 
+#include <algorithm>
 #include <thread>
 
 namespace {
@@ -71,7 +75,98 @@ QDateTime wholeSecond(QDateTime t) {
   return t;
 }
 
+constexpr int kMaxLogLines = 500;
+
+QString logLevelName(QtMsgType type) {
+  switch (type) {
+  case QtDebugMsg:
+    return QStringLiteral("DEBUG");
+  case QtInfoMsg:
+    return QStringLiteral("INFO");
+  case QtWarningMsg:
+    return QStringLiteral("WARNING");
+  case QtCriticalMsg:
+    return QStringLiteral("CRITICAL");
+  case QtFatalMsg:
+    return QStringLiteral("FATAL");
+  }
+  return QStringLiteral("INFO");
+}
+
+QString flattenLogText(QString text) {
+  text.replace(QLatin1Char('\r'), QLatin1Char(' '));
+  text.replace(QLatin1Char('\n'), QLatin1Char(' '));
+  return text;
+}
+
+// Queues log lines onto the GUI thread. Worker threads (sync) also call qInfo.
+class LogSink : public QObject {
+public:
+  static LogSink *instance() {
+    static auto *sink = new LogSink(QCoreApplication::instance());
+    return sink;
+  }
+
+  void post(const QString &time, const QString &level, const QString &text) {
+    QTimer::singleShot(0, this, [this, time, level, text]() {
+      if (!consumer_) {
+        pending_.append(Pending{time, level, text});
+        while (pending_.size() > kMaxLogLines) {
+          pending_.removeFirst();
+        }
+        return;
+      }
+      consumer_(time, level, text);
+    });
+  }
+
+  void setConsumer(
+      std::function<void(const QString &, const QString &, const QString &)>
+          fn) {
+    consumer_ = std::move(fn);
+    if (!consumer_) {
+      return;
+    }
+    const QList<Pending> queued = pending_;
+    pending_.clear();
+    for (const Pending &line : queued) {
+      consumer_(line.time, line.level, line.text);
+    }
+  }
+
+private:
+  explicit LogSink(QObject *parent) : QObject(parent) {}
+
+  struct Pending {
+    QString time;
+    QString level;
+    QString text;
+  };
+
+  std::function<void(const QString &, const QString &, const QString &)>
+      consumer_;
+  QList<Pending> pending_;
+};
+
+QtMessageHandler previousLogHandler = nullptr;
+
+void ergotimeMessageHandler(QtMsgType type, const QMessageLogContext &context,
+                            const QString &msg) {
+  if (previousLogHandler) {
+    previousLogHandler(type, context, msg);
+  }
+  const QDateTime now = QDateTime::currentDateTime();
+  const QString time =
+      now.toOffsetFromUtc(now.offsetFromUtc()).toString(Qt::ISODateWithMs);
+  LogSink::instance()->post(time, logLevelName(type), msg);
+}
+
 } // namespace
+
+void installLogSink() {
+  LogSink::instance();
+  previousLogHandler = qInstallMessageHandler(ergotimeMessageHandler);
+}
 
 MainWindow::MainWindow(Settings &settings, Store &store, Engine &engine,
                        Tracker &tracker, QWidget *parent)
@@ -94,16 +189,9 @@ MainWindow::MainWindow(Settings &settings, Store &store, Engine &engine,
       syncNow();
     }
   });
-  connect(&tracker_, &Tracker::errorOccurred, this, [this](const QString &msg) {
-    statusLabel_->setText(msg);
-    qWarning() << msg;
-  });
-  connect(&engine_, &Engine::finished, this, [this](const SyncResult &res) {
-    if (!res.ok && !res.skipped) {
-      syncLabel_->setText(QStringLiteral("error: %1").arg(res.message));
-    } else if (!res.message.isEmpty()) {
-      syncLabel_->setText(res.message);
-    }
+  connect(&tracker_, &Tracker::errorOccurred, this,
+          [this](const QString &msg) { qWarning() << msg; });
+  connect(&engine_, &Engine::finished, this, [this](const SyncResult &) {
     refreshSyncStatus();
     refreshCatalog();
     refreshReports();
@@ -119,6 +207,9 @@ MainWindow::MainWindow(Settings &settings, Store &store, Engine &engine,
   if (!cfg.trackSplitterState.isEmpty()) {
     trackSplitter_->restoreState(cfg.trackSplitterState);
   }
+  if (!cfg.logSplitterState.isEmpty()) {
+    logSplitter_->restoreState(cfg.logSplitterState);
+  }
   refreshCatalog();
   dateEdit_->setDate(QDate::currentDate());
   refreshSyncStatus();
@@ -130,7 +221,10 @@ MainWindow::MainWindow(Settings &settings, Store &store, Engine &engine,
   }
 }
 
-MainWindow::~MainWindow() { joinWorkers(); }
+MainWindow::~MainWindow() {
+  LogSink::instance()->setConsumer({});
+  joinWorkers();
+}
 
 void MainWindow::spawn(std::function<void()> fn) {
   std::lock_guard lock(workersMu_);
@@ -163,14 +257,18 @@ void MainWindow::buildUi() {
   // The .ui geometry marks the window as already placed. Clear that so the
   // window manager places a first run. A saved geometry is restored after
   // this returns.
-  resize(820, 560);
+  resize(820, 700);
   setAttribute(Qt::WA_Moved, false);
   setWindowTitle(QStringLiteral("ErgoTime %1").arg(ergotimeVersion()));
 
   splitter_ = form.splitter;
   trackSplitter_ = form.trackSplitter;
+  logSplitter_ = form.logSplitter;
   splitter_->setStretchFactor(0, 1);
   splitter_->setStretchFactor(1, 2);
+  logSplitter_->setStretchFactor(0, 3);
+  logSplitter_->setStretchFactor(1, 1);
+  logSplitter_->setSizes({320, 160});
   trackSplitter_->setStretchFactor(0, 1);
   trackSplitter_->setStretchFactor(1, 2);
   customers_ = form.customers;
@@ -181,10 +279,10 @@ void MainWindow::buildUi() {
   stateLabel_ = form.stateLabel;
   lengthLabel_ = form.lengthLabel;
   idleLabel_ = form.idleLabel;
-  syncLabel_ = form.syncLabel;
-  statusLabel_ = form.statusLabel;
-  statusBar()->addWidget(statusLabel_);
   table_ = form.reportsTable;
+  logTable_ = form.logTable;
+  logAutoscroll_ = form.logAutoscroll;
+  logClear_ = form.logClear;
   autoSync_ = form.autoSync;
   dateEdit_ = form.dateEdit;
   weekday_ = form.weekdayLabel;
@@ -197,6 +295,30 @@ void MainWindow::buildUi() {
         col, QHeaderView::ResizeToContents);
   }
   table_->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Stretch);
+  logTable_->horizontalHeader()->setSectionResizeMode(
+      0, QHeaderView::ResizeToContents);
+  logTable_->horizontalHeader()->setSectionResizeMode(
+      1, QHeaderView::ResizeToContents);
+  logTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+  logTable_->verticalHeader()->setSectionResizeMode(
+      QHeaderView::ResizeToContents);
+  logTable_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+  auto *copyLog = new QShortcut(QKeySequence::Copy, logTable_);
+  copyLog->setContext(Qt::WidgetWithChildrenShortcut);
+  connect(copyLog, &QShortcut::activated, this, &MainWindow::copyLogSelection);
+  connect(logClear_, &QCheckBox::clicked, this, [this](bool checked) {
+    if (!checked) {
+      return;
+    }
+    logTable_->setRowCount(0);
+    // Uncheck after this click finishes, so the box does not stay on.
+    QTimer::singleShot(0, logClear_,
+                       [this]() { logClear_->setChecked(false); });
+  });
+  LogSink::instance()->setConsumer(
+      [this](const QString &time, const QString &level, const QString &text) {
+        appendLogLine(time, level, text);
+      });
 
   connect(form.actionSyncNow, &QAction::triggered, this, &MainWindow::syncNow);
   connect(form.actionQuit, &QAction::triggered, this, &MainWindow::quitApp);
@@ -214,7 +336,7 @@ void MainWindow::buildUi() {
     }
     tracker_.setIdleTimeoutMs(updated->idleTimeoutMs());
     engine_.restartPeriodic();
-    statusLabel_->setText(QStringLiteral("Settings saved"));
+    qInfo() << "Settings saved";
   });
   connect(form.actionAbout, &QAction::triggered, this, [this] {
     QMessageBox::about(
@@ -367,7 +489,58 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 
 void MainWindow::saveLayout() {
   settings_.saveWindowLayout(saveGeometry(), splitter_->saveState(),
-                             trackSplitter_->saveState());
+                             trackSplitter_->saveState(),
+                             logSplitter_->saveState());
+}
+
+void MainWindow::appendLogLine(const QString &time, const QString &level,
+                               const QString &text) {
+  const bool follow = logAutoscroll_->isChecked();
+  QScrollBar *bar = logTable_->verticalScrollBar();
+  const int scroll = bar->value();
+  const int row = logTable_->rowCount();
+  logTable_->insertRow(row);
+  const QString body = flattenLogText(text);
+  const QString cells[] = {time, level, body};
+  for (int column = 0; column < 3; ++column) {
+    auto *item = new QTableWidgetItem(cells[column]);
+    item->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+    item->setToolTip(body);
+    logTable_->setItem(row, column, item);
+  }
+  logTable_->resizeRowToContents(row);
+  while (logTable_->rowCount() > kMaxLogLines) {
+    logTable_->removeRow(0);
+  }
+  if (follow) {
+    logTable_->scrollToBottom();
+  } else {
+    bar->setValue(scroll);
+  }
+}
+
+void MainWindow::copyLogSelection() {
+  const QModelIndexList selected = logTable_->selectionModel()->selectedRows();
+  if (selected.isEmpty()) {
+    return;
+  }
+  QList<int> rows;
+  rows.reserve(selected.size());
+  for (const QModelIndex &index : selected) {
+    rows.append(index.row());
+  }
+  std::sort(rows.begin(), rows.end());
+  QStringList lines;
+  lines.reserve(rows.size());
+  for (int row : rows) {
+    const auto cell = [this, row](int column) {
+      const QTableWidgetItem *item = logTable_->item(row, column);
+      return item ? item->text() : QString();
+    };
+    lines.append(QStringLiteral("%1  %2  %3")
+                     .arg(cell(0), cell(1).leftJustified(8), cell(2)));
+  }
+  QApplication::clipboard()->setText(lines.join(QLatin1Char('\n')));
 }
 
 void MainWindow::quitApp() {
@@ -390,20 +563,14 @@ void MainWindow::quitApp() {
 
 void MainWindow::syncNow() {
   spawn([this] {
-    SyncResult res;
     try {
-      res = engine_.sync();
+      engine_.sync();
     } catch (const std::exception &ex) {
-      res.message = QString::fromUtf8(ex.what());
+      qWarning() << "sync failed" << ex.what();
     }
     QMetaObject::invokeMethod(
         this,
-        [this, res] {
-          if (!res.ok && !res.skipped) {
-            syncLabel_->setText(QStringLiteral("error: %1").arg(res.message));
-          } else {
-            syncLabel_->setText(res.message);
-          }
+        [this] {
           refreshSyncStatus();
           refreshCatalog();
           refreshReports();
@@ -414,20 +581,14 @@ void MainWindow::syncNow() {
 
 void MainWindow::syncCatalogNow() {
   spawn([this] {
-    SyncResult res;
     try {
-      res = engine_.syncCatalog();
+      engine_.syncCatalog();
     } catch (const std::exception &ex) {
-      res.message = QString::fromUtf8(ex.what());
+      qWarning() << "sync catalog failed" << ex.what();
     }
     QMetaObject::invokeMethod(
         this,
-        [this, res] {
-          if (!res.ok && !res.skipped) {
-            syncLabel_->setText(QStringLiteral("error: %1").arg(res.message));
-          } else {
-            syncLabel_->setText(res.message);
-          }
+        [this] {
           refreshSyncStatus();
           refreshCatalog();
         },
@@ -877,23 +1038,28 @@ void MainWindow::refreshReports() {
 }
 
 void MainWindow::refreshSyncStatus() {
+  QString line;
   try {
     const SyncStatus st = store_.syncStatus();
     if (!st.lastSyncAt.isValid()) {
-      syncLabel_->setText(QStringLiteral("Sync: not run yet"));
-      return;
+      line = QStringLiteral("Sync: not run yet");
+    } else {
+      const QString when = st.lastSyncAt.toLocalTime().toString(
+          QStringLiteral("yyyy-MM-dd HH:mm"));
+      line = QStringLiteral("Sync: %1 at %2 (seq %3)")
+                 .arg(st.lastOk ? st.lastMessage
+                                : QStringLiteral("error: ") + st.lastMessage,
+                      when)
+                 .arg(st.lastSeq);
     }
-    const QString when = st.lastSyncAt.toLocalTime().toString(
-        QStringLiteral("yyyy-MM-dd HH:mm"));
-    syncLabel_->setText(
-        QStringLiteral("Sync: %1 at %2 (seq %3)")
-            .arg(st.lastOk ? st.lastMessage
-                           : QStringLiteral("error: ") + st.lastMessage,
-                 when)
-            .arg(st.lastSeq));
   } catch (const std::exception &ex) {
-    syncLabel_->setText(QString::fromUtf8(ex.what()));
+    line = QString::fromUtf8(ex.what());
   }
+  if (line == lastSyncLine_) {
+    return;
+  }
+  lastSyncLine_ = line;
+  qInfo().noquote() << line;
 }
 
 void MainWindow::rebuildTray() {

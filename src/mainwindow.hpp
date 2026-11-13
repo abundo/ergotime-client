@@ -24,6 +24,9 @@ class QPushButton;
 class QSplitter;
 class QTableWidget;
 
+// Sends Qt log messages to the log pane. Call once, before the first qInfo.
+void installLogSink();
+
 class MainWindow : public QMainWindow {
   Q_OBJECT
 public:
@@ -55,6 +58,9 @@ private:
   void refreshSyncStatus();
   void rebuildTray();
   void saveLayout();
+  void appendLogLine(const QString &time, const QString &level,
+                     const QString &text);
+  void copyLogSelection();
   void setTrackerState(TrackerState state);
   qint64 selectedId(QListWidget *list) const;
   QDate selectedDay() const;
@@ -66,6 +72,7 @@ private:
 
   QSplitter *splitter_ = nullptr;
   QSplitter *trackSplitter_ = nullptr;
+  QSplitter *logSplitter_ = nullptr;
   QListWidget *customers_ = nullptr;
   QPushButton *startBtn_ = nullptr;
   QPushButton *stopBtn_ = nullptr;
@@ -74,9 +81,10 @@ private:
   QLabel *stateLabel_ = nullptr;
   QLabel *lengthLabel_ = nullptr;
   QLabel *idleLabel_ = nullptr;
-  QLabel *syncLabel_ = nullptr;
-  QLabel *statusLabel_ = nullptr;
   QTableWidget *table_ = nullptr;
+  QTableWidget *logTable_ = nullptr;
+  QCheckBox *logAutoscroll_ = nullptr;
+  QCheckBox *logClear_ = nullptr;
   QCheckBox *autoSync_ = nullptr;
   QDateEdit *dateEdit_ = nullptr;
   QLabel *weekday_ = nullptr;
@@ -96,4 +104,5 @@ private:
   bool startTimeEdited_ = false;
   QDate startDateBaseline_;
   bool dateConfirmOpen_ = false;
+  QString lastSyncLine_;
 };

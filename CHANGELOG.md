@@ -21,6 +21,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Added
 
+- A log pane under the reports shows the last 500 lines. Each line is the time in ISO-8601, the level, and the message. The divider can be dragged. Autoscroll keeps the latest line in view, and Clear log empties the pane.
+- The sync status line and the status bar are gone. That sync text is written to the log instead.
 - The main window, settings dialog, and report dialog are Qt Designer forms in `src/ui`. Open those files in Qt Designer to change the layout.
 - The window title, tray tooltip, About dialog, and settings show the version. A clean build of the matching `vX.Y.Z` tag shows `X.Y.Z` and keeps using `~/.ergotime2`. Any other build appends `+` and the git SHA-1, and that suffix stores settings and the database in `~/.ergotime2-dev`.
 - The time-tracking panel has a Started date and time. It follows the clock until edited. Start uses that time, and the field stays editable while the entry is running. A time in the future is refused.

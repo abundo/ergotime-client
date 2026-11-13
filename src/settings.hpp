@@ -22,6 +22,7 @@ struct Config {
   QByteArray windowGeometry;
   QByteArray splitterState;
   QByteArray trackSplitterState;
+  QByteArray logSplitterState;
   QString dataDir;
   QString database;
   QString configPath;
@@ -45,7 +46,8 @@ public:
   Config get() const;
   void update(const Config &cfg);
   void saveWindowLayout(const QByteArray &geometry, const QByteArray &splitter,
-                        const QByteArray &trackSplitter);
+                        const QByteArray &trackSplitter,
+                        const QByteArray &logSplitter);
   void touchRecentCustomer(qint64 id);
 
 private:

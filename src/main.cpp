@@ -15,6 +15,7 @@ int main(int argc, char *argv[]) {
   QApplication::setOrganizationDomain(QStringLiteral("abundo.se"));
   QApplication::setDesktopFileName(QStringLiteral("ergotime"));
   QApplication::setQuitOnLastWindowClosed(false);
+  installLogSink();
 
   try {
     Settings settings;

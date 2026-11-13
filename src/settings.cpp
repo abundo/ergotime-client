@@ -84,6 +84,8 @@ Settings::Settings() {
       o.value(QStringLiteral("splitter_state")).toString().toLatin1());
   loaded.trackSplitterState = QByteArray::fromBase64(
       o.value(QStringLiteral("track_splitter_state")).toString().toLatin1());
+  loaded.logSplitterState = QByteArray::fromBase64(
+      o.value(QStringLiteral("log_splitter_state")).toString().toLatin1());
   loaded.dataDir = o.value(QStringLiteral("data_dir")).toString();
   loaded.database = o.value(QStringLiteral("database")).toString();
   if (loaded.dataDir.isEmpty()) {
@@ -127,11 +129,13 @@ void Settings::update(const Config &cfg) {
 
 void Settings::saveWindowLayout(const QByteArray &geometry,
                                 const QByteArray &splitter,
-                                const QByteArray &trackSplitter) {
+                                const QByteArray &trackSplitter,
+                                const QByteArray &logSplitter) {
   std::lock_guard lock(mu_);
   cfg_.windowGeometry = geometry;
   cfg_.splitterState = splitter;
   cfg_.trackSplitterState = trackSplitter;
+  cfg_.logSplitterState = logSplitter;
   saveLocked();
 }
 
@@ -187,6 +191,10 @@ void Settings::saveLocked() {
   if (!cfg_.trackSplitterState.isEmpty()) {
     o.insert(QStringLiteral("track_splitter_state"),
              QString::fromLatin1(cfg_.trackSplitterState.toBase64()));
+  }
+  if (!cfg_.logSplitterState.isEmpty()) {
+    o.insert(QStringLiteral("log_splitter_state"),
+             QString::fromLatin1(cfg_.logSplitterState.toBase64()));
   }
   if (!cfg_.dataDir.isEmpty()) {
     o.insert(QStringLiteral("data_dir"), cfg_.dataDir);
