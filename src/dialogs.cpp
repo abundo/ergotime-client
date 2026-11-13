@@ -1,5 +1,7 @@
 #include "dialogs.hpp"
 
+#include "ui_reportdialog.h"
+#include "ui_settingsdialog.h"
 #include "version.hpp"
 
 #include <QComboBox>
@@ -7,8 +9,6 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QEvent>
-#include <QFormLayout>
-#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QLabel>
@@ -20,11 +20,8 @@
 #include <QSpinBox>
 #include <QStringList>
 #include <QStyledItemDelegate>
-#include <QTabWidget>
 #include <QTableWidget>
 #include <QTextDocument>
-#include <QVBoxLayout>
-
 namespace {
 
 int commentRowHeight(const QFontMetrics &fm, const QString &text) {
@@ -203,6 +200,11 @@ void configureProjectCommentTable(QTableWidget *table) {
                    });
   table->setWordWrap(false);
   table->setTextElideMode(Qt::ElideRight);
+  if (table->columnCount() >= 2) {
+    table->horizontalHeader()->setSectionResizeMode(
+        0, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+  }
   const int oneLine = commentRowHeight(table->fontMetrics(), QString());
   table->verticalHeader()->setMinimumSectionSize(oneLine);
   table->verticalHeader()->setDefaultSectionSize(oneLine);
@@ -220,82 +222,36 @@ void configureProjectCommentTable(QTableWidget *table) {
 
 std::optional<Config> showSettingsDialog(QWidget *parent, const Config &cfg) {
   QDialog dlg(parent);
-  dlg.setWindowTitle(QStringLiteral("ErgoTime Settings"));
+  Ui::SettingsDialog ui;
+  ui.setupUi(&dlg);
+  // The form's geometry marks the dialog as already placed. Clear that so
+  // exec() centers it on the parent, then keep the designed size.
   dlg.resize(520, 360);
-  auto *root = new QVBoxLayout(&dlg);
-  auto *tabs = new QTabWidget;
-  root->addWidget(tabs);
-
-  auto *gen = new QWidget;
-  auto *genForm = new QFormLayout(gen);
-  auto *username = new QLineEdit(cfg.username);
-  auto *password = new QLineEdit(cfg.password);
-  password->setEchoMode(QLineEdit::Password);
-  password->setPlaceholderText(QStringLiteral("Server password"));
-  auto *idle = new QSpinBox;
-  idle->setRange(0, 86400);
-  idle->setValue(cfg.idleTimeoutSec);
-  idle->setSuffix(QStringLiteral(" sec"));
-  auto *dataDir = new QLineEdit(cfg.dataDir);
-  dataDir->setReadOnly(true);
-  auto *version = new QLineEdit(ergotimeVersion());
-  version->setReadOnly(true);
-  genForm->addRow(QStringLiteral("Version"), version);
-  genForm->addRow(QStringLiteral("Username"), username);
-  genForm->addRow(QStringLiteral("Password"), password);
-  genForm->addRow(QStringLiteral("Idle timeout"), idle);
-  genForm->addRow(QStringLiteral("Data directory"), dataDir);
-  tabs->addTab(gen, QStringLiteral("General"));
-
-  auto *cat = new QWidget;
-  auto *catForm = new QFormLayout(cat);
-  auto *actSync = new QSpinBox;
-  actSync->setRange(0, 86400);
-  actSync->setValue(cfg.activitySyncIntervalSec);
-  actSync->setSuffix(QStringLiteral(" sec"));
-  actSync->setSpecialValueText(QStringLiteral("disabled"));
-  catForm->addRow(QStringLiteral("Sync interval"), actSync);
-  tabs->addTab(cat, QStringLiteral("Catalog"));
-
-  auto *rep = new QWidget;
-  auto *repForm = new QFormLayout(rep);
-  auto *repSync = new QSpinBox;
-  repSync->setRange(0, 86400);
-  repSync->setValue(cfg.reportSyncIntervalSec);
-  repSync->setSuffix(QStringLiteral(" sec"));
-  repSync->setSpecialValueText(QStringLiteral("disabled"));
-  repForm->addRow(QStringLiteral("Sync interval"), repSync);
-  tabs->addTab(rep, QStringLiteral("Report"));
-
-  auto *net = new QWidget;
-  auto *netForm = new QFormLayout(net);
-  auto *server = new QLineEdit(cfg.serverUrl);
-  auto *netTo = new QSpinBox;
-  netTo->setRange(1, 600);
-  netTo->setValue(cfg.networkTimeoutSec);
-  netTo->setSuffix(QStringLiteral(" sec"));
-  netForm->addRow(QStringLiteral("Server URL"), server);
-  netForm->addRow(QStringLiteral("Network timeout"), netTo);
-  tabs->addTab(net, QStringLiteral("Network"));
-
-  auto *buttons =
-      new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-  QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg,
+  dlg.setAttribute(Qt::WA_Moved, false);
+  ui.versionEdit->setText(ergotimeVersion());
+  ui.usernameEdit->setText(cfg.username);
+  ui.passwordEdit->setText(cfg.password);
+  ui.idleSpin->setValue(cfg.idleTimeoutSec);
+  ui.dataDirEdit->setText(cfg.dataDir);
+  ui.catalogSyncSpin->setValue(cfg.activitySyncIntervalSec);
+  ui.reportSyncSpin->setValue(cfg.reportSyncIntervalSec);
+  ui.serverEdit->setText(cfg.serverUrl);
+  ui.networkTimeoutSpin->setValue(cfg.networkTimeoutSec);
+  QObject::connect(ui.buttonBox, &QDialogButtonBox::accepted, &dlg,
                    &QDialog::accept);
-  QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg,
+  QObject::connect(ui.buttonBox, &QDialogButtonBox::rejected, &dlg,
                    &QDialog::reject);
-  root->addWidget(buttons);
   if (dlg.exec() != QDialog::Accepted) {
     return std::nullopt;
   }
   Config out = cfg;
-  out.username = username->text();
-  out.password = password->text();
-  out.idleTimeoutSec = idle->value();
-  out.activitySyncIntervalSec = actSync->value();
-  out.reportSyncIntervalSec = repSync->value();
-  out.serverUrl = server->text();
-  out.networkTimeoutSec = netTo->value();
+  out.username = ui.usernameEdit->text();
+  out.password = ui.passwordEdit->text();
+  out.idleTimeoutSec = ui.idleSpin->value();
+  out.activitySyncIntervalSec = ui.catalogSyncSpin->value();
+  out.reportSyncIntervalSec = ui.reportSyncSpin->value();
+  out.serverUrl = ui.serverEdit->text();
+  out.networkTimeoutSec = ui.networkTimeoutSpin->value();
   return out;
 }
 
@@ -316,14 +272,18 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
   }
 
   QDialog dlg(parent);
+  Ui::ReportDialog ui;
+  ui.setupUi(&dlg);
   dlg.setWindowTitle(isNew ? QStringLiteral("Create report")
                            : QStringLiteral("Edit report"));
+  // The form's geometry marks the dialog as already placed. Clear that so
+  // exec() centers it on the parent, then keep the designed size.
   dlg.resize(640, 560);
-  auto *root = new QVBoxLayout(&dlg);
-  auto *form = new QFormLayout;
-  form->addRow(QStringLiteral("Sync state"), new QLabel(syncFlags(r)));
+  dlg.setAttribute(Qt::WA_Moved, false);
+  ui.verticalLayout->setStretch(0, 1);
+  ui.syncStateLabel->setText(syncFlags(r));
 
-  auto *custCombo = new QComboBox;
+  auto *custCombo = ui.customerCombo;
   qint64 selectedCust = r.customerId;
   if (selectedCust <= 0 && r.projectId > 0) {
     selectedCust = store.projectCustomerLocalId(r.projectId);
@@ -341,16 +301,7 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
   if (custIdx >= 0) {
     custCombo->setCurrentIndex(custIdx);
   }
-  auto *comments = new QTableWidget(0, 2);
-  comments->setHorizontalHeaderLabels(
-      {QStringLiteral("Project"), QStringLiteral("Comment")});
-  comments->horizontalHeader()->setSectionResizeMode(
-      0, QHeaderView::ResizeToContents);
-  comments->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-  comments->verticalHeader()->setVisible(false);
-  comments->setSelectionBehavior(QAbstractItemView::SelectRows);
-  comments->setSelectionMode(QAbstractItemView::SingleSelection);
-  comments->setMinimumHeight(160);
+  auto *comments = ui.commentTable;
   configureProjectCommentTable(comments);
   qint64 anchorId = 0;
   if (r.lines.size() == 1) {
@@ -367,24 +318,21 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
   reloadProjects();
   QObject::connect(custCombo, qOverload<int>(&QComboBox::currentIndexChanged),
                    &dlg, [&](int) { reloadProjects(); });
-  form->addRow(QStringLiteral("Customer"), custCombo);
-
-  auto *dtStart = new QDateTimeEdit(r.start.toLocalTime());
-  auto *dtStop = new QDateTimeEdit(
-      (r.stop ? *r.stop : r.start.addSecs(1800)).toLocalTime());
-  for (auto *dt : {dtStart, dtStop}) {
-    dt->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm"));
-    dt->setCalendarPopup(true);
-    if (!isNew) {
-      dt->setToolTip(QStringLiteral(
-          "Changing the date asks for confirmation when you save."));
-    }
+  auto *dtStart = ui.startEdit;
+  auto *dtStop = ui.stopEdit;
+  dtStart->setDateTime(r.start.toLocalTime());
+  dtStop->setDateTime((r.stop ? *r.stop : r.start.addSecs(1800)).toLocalTime());
+  if (!isNew) {
+    const auto tip = QStringLiteral(
+        "Changing the date asks for confirmation when you save.");
+    dtStart->setToolTip(tip);
+    dtStop->setToolTip(tip);
   }
   // Edit remembers the dates last accepted. A different day asks on save.
   // Create does not ask.
   QDate acceptedStart = dtStart->date();
   QDate acceptedStop = dtStop->date();
-  auto *len = new QLabel;
+  auto *len = ui.lengthLabel;
   auto updateLen = [&] {
     if (dtStop->dateTime() < dtStart->dateTime()) {
       dtStop->setDateTime(dtStart->dateTime());
@@ -396,60 +344,43 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
   QObject::connect(dtStop, &QDateTimeEdit::dateTimeChanged, &dlg, updateLen);
   updateLen();
 
-  auto nudgeRow = [&](QDateTimeEdit *primary, bool shiftBoth) {
-    auto *row = new QHBoxLayout;
-    row->addWidget(primary);
-    const struct {
-      const char *label;
-      int secs;
-    } buttons[] = {{"-H", -3600}, {"+H", 3600}, {"-M", -60}, {"+M", 60}};
-    for (const auto &b : buttons) {
-      auto *btn = new QPushButton(QString::fromUtf8(b.label));
-      // Copy the editor pointers. primary is a parameter of this lambda, so a
-      // reference capture would dangle after nudgeRow returns and crash on
-      // click.
-      QObject::connect(
-          btn, &QPushButton::clicked, &dlg,
-          [dtStart, dtStop, primary, secs = b.secs, shiftBoth, &updateLen] {
-            const QDateTime start = dtStart->dateTime();
-            const QDateTime stop = dtStop->dateTime();
-            {
-              const QSignalBlocker blockStart(dtStart);
-              const QSignalBlocker blockStop(dtStop);
-              if (shiftBoth) {
-                dtStart->setDateTime(start.addSecs(secs));
-                dtStop->setDateTime(stop.addSecs(secs));
-              } else {
-                primary->setDateTime(primary->dateTime().addSecs(secs));
-              }
-            }
-            updateLen();
-          });
-      row->addWidget(btn);
-    }
-    return row;
+  // Copy the editor pointers into the clicked handlers. A reference to a
+  // local would dangle if the connection outlived this function.
+  auto connectNudge = [&](QPushButton *btn, QDateTimeEdit *primary, int secs,
+                          bool shiftBoth) {
+    QObject::connect(btn, &QPushButton::clicked, &dlg,
+                     [dtStart, dtStop, primary, secs, shiftBoth, &updateLen] {
+                       const QDateTime start = dtStart->dateTime();
+                       const QDateTime stop = dtStop->dateTime();
+                       {
+                         const QSignalBlocker blockStart(dtStart);
+                         const QSignalBlocker blockStop(dtStop);
+                         if (shiftBoth) {
+                           dtStart->setDateTime(start.addSecs(secs));
+                           dtStop->setDateTime(stop.addSecs(secs));
+                         } else {
+                           primary->setDateTime(
+                               primary->dateTime().addSecs(secs));
+                         }
+                       }
+                       updateLen();
+                     });
   };
-  form->addRow(QStringLiteral("Start"), nudgeRow(dtStart, true));
-  form->addRow(QStringLiteral("Stop"), nudgeRow(dtStop, false));
-  form->addRow(QStringLiteral("Length"), len);
+  connectNudge(ui.startMinusHour, dtStart, -3600, true);
+  connectNudge(ui.startPlusHour, dtStart, 3600, true);
+  connectNudge(ui.startMinusMinute, dtStart, -60, true);
+  connectNudge(ui.startPlusMinute, dtStart, 60, true);
+  connectNudge(ui.stopMinusHour, dtStop, -3600, false);
+  connectNudge(ui.stopPlusHour, dtStop, 3600, false);
+  connectNudge(ui.stopMinusMinute, dtStop, -60, false);
+  connectNudge(ui.stopPlusMinute, dtStop, 60, false);
 
-  form->addRow(QStringLiteral("Comment"), comments);
-  root->addLayout(form, 1);
-
-  auto *save = new QPushButton(QStringLiteral("Save"));
-  auto *del = new QPushButton(QStringLiteral("Delete"));
-  auto *cancel = new QPushButton(QStringLiteral("Cancel"));
-  del->setEnabled(!isNew);
-  auto *btnRow = new QHBoxLayout;
-  btnRow->addWidget(save);
-  btnRow->addWidget(del);
-  btnRow->addStretch();
-  btnRow->addWidget(cancel);
-  root->addLayout(btnRow);
+  ui.deleteButton->setEnabled(!isNew);
 
   bool saved = false;
-  QObject::connect(cancel, &QPushButton::clicked, &dlg, &QDialog::reject);
-  QObject::connect(save, &QPushButton::clicked, &dlg, [&] {
+  QObject::connect(ui.cancelButton, &QPushButton::clicked, &dlg,
+                   &QDialog::reject);
+  QObject::connect(ui.saveButton, &QPushButton::clicked, &dlg, [&] {
     const qint64 custId = custCombo->currentData().toLongLong();
     std::vector<Project> projects = store.listProjects(custId, false);
     std::vector<ReportLine> rows;
@@ -546,7 +477,7 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
     saved = true;
     dlg.accept();
   });
-  QObject::connect(del, &QPushButton::clicked, &dlg, [&] {
+  QObject::connect(ui.deleteButton, &QPushButton::clicked, &dlg, [&] {
     if (QMessageBox::question(
             &dlg, QStringLiteral("Delete report"),
             QStringLiteral("Do you want to delete the report?")) !=

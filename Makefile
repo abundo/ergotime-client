@@ -20,6 +20,13 @@ ifeq ($(wildcard $(STATIC_MOC)),)
 STATIC_MOC := $(MOC)
 endif
 WIN_MOC := $(QT_HOST_PATH)/libexec/moc
+UIC := $(QT_HOST_PATH)/libexec/uic
+ifeq ($(wildcard $(UIC)),)
+UIC := $(QT_PREFIX)/libexec/uic
+endif
+ifeq ($(wildcard $(UIC)),)
+UIC := $(QT_STATIC_PREFIX)/libexec/uic
+endif
 
 PKG_CONFIG_PATH := $(QT_PREFIX)/lib/pkgconfig
 export PKG_CONFIG_PATH
@@ -27,6 +34,7 @@ export PKG_CONFIG_PATH
 SRC := src/main.cpp src/settings.cpp src/store.cpp src/idle.cpp src/tracker.cpp src/sync.cpp src/dialogs.cpp src/mainwindow.cpp src/version.cpp
 VERSION_CPP := build/version.cpp
 MOC_SRC := build/moc_mainwindow.cpp build/moc_tracker.cpp build/moc_engine.cpp
+UI_HEADERS := build/ui_mainwindow.h build/ui_settingsdialog.h build/ui_reportdialog.h
 
 ifneq ($(wildcard $(QT_PREFIX)/lib/pkgconfig/Qt6Widgets.pc),)
 CXXFLAGS := -std=c++17 -Wall -Wextra -Wno-sfinae-incomplete -fPIC -O2 $(shell pkg-config --cflags Qt6Widgets Qt6Sql Qt6Network Qt6DBus)
@@ -45,7 +53,10 @@ $(VERSION_CPP): FORCE
 	@mkdir -p build
 	@./scripts/write-version-cpp.sh $@
 
-build/ergotime: $(SRC) $(MOC_SRC) $(VERSION_CPP)
+build/ui_%.h: src/ui/%.ui | build
+	$(UIC) $< -o $@
+
+build/ergotime: $(SRC) $(MOC_SRC) $(VERSION_CPP) $(UI_HEADERS)
 	$(CXX) $(CXXFLAGS) -Isrc -Ibuild -o $@ $(SRC) $(MOC_SRC) $(VERSION_CPP) $(LIBS) $(LDFLAGS)
 
 build/moc_mainwindow.cpp: src/mainwindow.hpp | build
@@ -60,7 +71,7 @@ build/moc_engine.cpp: src/sync.hpp | build
 build/static_plugins.cpp: $(QT_STATIC_PREFIX)/lib/libQt6Core.a scripts/qt-static.py | build
 	python3 scripts/qt-static.py plugins $(QT_STATIC_PREFIX) $@
 
-build/ergotime-static: $(SRC) build/static_plugins.cpp $(VERSION_CPP) | build
+build/ergotime-static: $(SRC) build/static_plugins.cpp $(VERSION_CPP) $(UI_HEADERS) | build
 	$(STATIC_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_STATIC_PREFIX)) src/mainwindow.hpp -o build/moc_mainwindow.cpp
 	$(STATIC_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_STATIC_PREFIX)) src/tracker.hpp -o build/moc_tracker.cpp
 	$(STATIC_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_STATIC_PREFIX)) src/sync.hpp -o build/moc_engine.cpp
@@ -74,7 +85,7 @@ build/ergotime-static: $(SRC) build/static_plugins.cpp $(VERSION_CPP) | build
 build/windows_plugins.cpp: $(QT_WINDOWS_PREFIX)/lib/libQt6Core.a scripts/qt-static.py | build
 	NM=$(MINGW_NM) python3 scripts/qt-static.py plugins $(QT_WINDOWS_PREFIX) $@
 
-build/ergotime.exe: $(SRC) build/windows_plugins.cpp $(VERSION_CPP) | build
+build/ergotime.exe: $(SRC) build/windows_plugins.cpp $(VERSION_CPP) $(UI_HEADERS) | build
 	$(WIN_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_WINDOWS_PREFIX)) src/mainwindow.hpp -o build/moc_mainwindow.cpp
 	$(WIN_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_WINDOWS_PREFIX)) src/tracker.hpp -o build/moc_tracker.cpp
 	$(WIN_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_WINDOWS_PREFIX)) src/sync.hpp -o build/moc_engine.cpp

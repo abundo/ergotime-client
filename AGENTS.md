@@ -22,8 +22,9 @@ Each layer talks only to the one under it.
   pulls the catalog.
 - `tracker` starts and stops the running report and applies the idle timeout.
   `idle` is the platform probe and returns milliseconds, nothing else.
-- `dialogs` and `mainwindow` draw Qt widgets and call the store, engine, and
-  tracker. They do not open SQL or HTTP themselves.
+- `dialogs` and `mainwindow` draw the Qt widgets defined in `src/ui` and call
+  the store, engine, and tracker. They do not open SQL or HTTP themselves.
+  Layout lives in the Designer forms. Behavior stays in the C++ files.
 
 ## Invariants
 

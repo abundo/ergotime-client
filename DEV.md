@@ -52,6 +52,16 @@ make
 `make static` links `$HOME/Qt/static/6.12.0` into `build/ergotime-static`.
 `ldd` on that binary should show system libraries only, not `libQt6` or ICU.
 
+# Interface forms
+
+The main window, settings dialog, and report dialog are Qt Designer forms:
+
+- `src/ui/mainwindow.ui`
+- `src/ui/settingsdialog.ui`
+- `src/ui/reportdialog.ui`
+
+Open those in Qt Designer (`designer` from the Qt 6.12 kit). `make` runs `uic` into `build/ui_*.h`. CMake does the same with `AUTOUIC`. Widget text, layout, and columns belong in the forms. Signals, table contents, and the tray menu stay in `src/mainwindow.cpp` and `src/dialogs.cpp`.
+
 There is no unit-test target. Check a change by building and running. A
 development build uses `~/.ergotime2-dev`. An offscreen smoke run is
 `QT_QPA_PLATFORM=offscreen ./build/ergotime`.

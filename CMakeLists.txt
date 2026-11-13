@@ -4,6 +4,8 @@ project(ergotime VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTOUIC_SEARCH_PATHS "${CMAKE_SOURCE_DIR}/src/ui")
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(ERGOTIME_STATIC "Link a static Qt (qtbase built with BUILD_SHARED_LIBS=OFF)" OFF)
@@ -25,6 +27,9 @@ set(ERGOTIME_SOURCES
     src/dialogs.cpp
     src/mainwindow.cpp
     src/version.cpp
+    src/ui/mainwindow.ui
+    src/ui/settingsdialog.ui
+    src/ui/reportdialog.ui
 )
 
 set(ERGOTIME_VERSION_CPP "${CMAKE_BINARY_DIR}/generated/version.cpp")

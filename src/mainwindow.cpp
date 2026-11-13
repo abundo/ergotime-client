@@ -1,22 +1,21 @@
 #include "mainwindow.hpp"
 
 #include "dialogs.hpp"
+#include "ui_mainwindow.h"
 #include "version.hpp"
 
+#include <QAction>
 #include <QApplication>
 #include <QCalendarWidget>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QDateEdit>
 #include <QDateTimeEdit>
-#include <QGroupBox>
-#include <QHBoxLayout>
 #include <QHash>
 #include <QHeaderView>
 #include <QLabel>
 #include <QListWidget>
 #include <QMenu>
-#include <QMenuBar>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPixmap>
@@ -25,11 +24,9 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTableWidget>
-#include <QTextEdit>
 #include <QThread>
 #include <QTimeZone>
 #include <QTimer>
-#include <QVBoxLayout>
 
 #include <thread>
 
@@ -80,8 +77,6 @@ MainWindow::MainWindow(Settings &settings, Store &store, Engine &engine,
                        Tracker &tracker, QWidget *parent)
     : QMainWindow(parent), settings_(settings), store_(store), engine_(engine),
       tracker_(tracker) {
-  setWindowTitle(QStringLiteral("ErgoTime %1").arg(ergotimeVersion()));
-  resize(820, 560);
   setWindowIcon(stateIcon(TrackerState::Inactive));
   buildUi();
 
@@ -163,12 +158,49 @@ void MainWindow::joinWorkers() {
 }
 
 void MainWindow::buildUi() {
-  auto *file = menuBar()->addMenu(QStringLiteral("&File"));
-  file->addAction(QStringLiteral("Sync now"), this, &MainWindow::syncNow);
-  file->addSeparator();
-  file->addAction(QStringLiteral("Quit"), this, &MainWindow::quitApp);
-  auto *edit = menuBar()->addMenu(QStringLiteral("&Edit"));
-  edit->addAction(QStringLiteral("Settings…"), this, [this] {
+  Ui::MainWindow form;
+  form.setupUi(this);
+  // The .ui geometry marks the window as already placed. Clear that so the
+  // window manager places a first run. A saved geometry is restored after
+  // this returns.
+  resize(820, 560);
+  setAttribute(Qt::WA_Moved, false);
+  setWindowTitle(QStringLiteral("ErgoTime %1").arg(ergotimeVersion()));
+
+  splitter_ = form.splitter;
+  trackSplitter_ = form.trackSplitter;
+  splitter_->setStretchFactor(0, 1);
+  splitter_->setStretchFactor(1, 2);
+  trackSplitter_->setStretchFactor(0, 1);
+  trackSplitter_->setStretchFactor(1, 2);
+  customers_ = form.customers;
+  startBtn_ = form.startButton;
+  stopBtn_ = form.stopButton;
+  startEdit_ = form.startEdit;
+  comment_ = form.commentTable;
+  stateLabel_ = form.stateLabel;
+  lengthLabel_ = form.lengthLabel;
+  idleLabel_ = form.idleLabel;
+  syncLabel_ = form.syncLabel;
+  statusLabel_ = form.statusLabel;
+  statusBar()->addWidget(statusLabel_);
+  table_ = form.reportsTable;
+  autoSync_ = form.autoSync;
+  dateEdit_ = form.dateEdit;
+  weekday_ = form.weekdayLabel;
+  autoSync_->setChecked(settings_.get().autoSync);
+  startEdit_->setDateTime(QDateTime::currentDateTime());
+  startDateBaseline_ = startEdit_->date();
+  configureProjectCommentTable(comment_);
+  for (int col = 0; col < 6; ++col) {
+    table_->horizontalHeader()->setSectionResizeMode(
+        col, QHeaderView::ResizeToContents);
+  }
+  table_->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Stretch);
+
+  connect(form.actionSyncNow, &QAction::triggered, this, &MainWindow::syncNow);
+  connect(form.actionQuit, &QAction::triggered, this, &MainWindow::quitApp);
+  connect(form.actionSettings, &QAction::triggered, this, [this] {
     auto updated = showSettingsDialog(this, settings_.get());
     if (!updated) {
       return;
@@ -184,8 +216,7 @@ void MainWindow::buildUi() {
     engine_.restartPeriodic();
     statusLabel_->setText(QStringLiteral("Settings saved"));
   });
-  auto *help = menuBar()->addMenu(QStringLiteral("&Help"));
-  help->addAction(QStringLiteral("About ErgoTime"), this, [this] {
+  connect(form.actionAbout, &QAction::triggered, this, [this] {
     QMessageBox::about(
         this, QStringLiteral("About ErgoTime"),
         QStringLiteral(
@@ -194,139 +225,8 @@ void MainWindow::buildUi() {
             "<p>C++ / Qt 6 client. License: GPLv3</p>")
             .arg(ergotimeVersion()));
   });
-  help->addAction(QStringLiteral("About Qt"), qApp, &QApplication::aboutQt);
-
-  auto *central = new QWidget;
-  auto *root = new QVBoxLayout(central);
-  splitter_ = new QSplitter(Qt::Vertical);
-
-  auto *top = new QWidget;
-  auto *topLay = new QVBoxLayout(top);
-  topLay->setContentsMargins(0, 0, 0, 0);
-  auto *track = new QGroupBox(QStringLiteral("Time tracking"));
-  auto *trackLay = new QVBoxLayout(track);
-  auto *leftPane = new QWidget;
-  auto *left = new QVBoxLayout(leftPane);
-  left->setContentsMargins(0, 0, 0, 0);
-  left->addWidget(new QLabel(QStringLiteral("Customer")));
-  customers_ = new QListWidget;
-  customers_->setToolTip(
-      QStringLiteral("Recently used customers appear at the top"));
-  left->addWidget(customers_, 1);
-  auto *startRow = new QHBoxLayout;
-  startRow->addWidget(new QLabel(QStringLiteral("Started")));
-  startEdit_ = new QDateTimeEdit(QDateTime::currentDateTime());
-  startEdit_->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm"));
-  startEdit_->setCalendarPopup(true);
-  startDateBaseline_ = startEdit_->date();
-  startEdit_->setToolTip(QStringLiteral(
-      "When this time entry started. Change it before Start, or while "
-      "tracking is running. Changing the date asks for confirmation."));
-  startRow->addWidget(startEdit_, 1);
-  left->addLayout(startRow);
-  auto *buttons = new QHBoxLayout;
-  startBtn_ = new QPushButton(QStringLiteral("Start"));
-  stopBtn_ = new QPushButton(QStringLiteral("Stop"));
-  auto *syncCat = new QPushButton(QStringLiteral("Sync catalog"));
-  syncCat->setToolTip(
-      QStringLiteral("Pull customers and projects from the server"));
-  buttons->addWidget(startBtn_);
-  buttons->addWidget(stopBtn_);
-  buttons->addWidget(syncCat);
-  buttons->addStretch();
-  left->addLayout(buttons);
-  auto *commentBox = new QGroupBox(QStringLiteral("Comment"));
-  auto *commentLay = new QVBoxLayout(commentBox);
-  comment_ = new QTableWidget(0, 2);
-  comment_->setHorizontalHeaderLabels(
-      {QStringLiteral("Project"), QStringLiteral("Comment")});
-  comment_->horizontalHeader()->setSectionResizeMode(
-      0, QHeaderView::ResizeToContents);
-  comment_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-  comment_->verticalHeader()->setVisible(false);
-  comment_->setSelectionBehavior(QAbstractItemView::SelectRows);
-  comment_->setSelectionMode(QAbstractItemView::SingleSelection);
-  configureProjectCommentTable(comment_);
-  comment_->setToolTip(QStringLiteral(
-      "The highlighted project is used when every comment is empty. "
-      "Comments on several projects share this interval."));
-  commentLay->addWidget(comment_);
-  trackSplitter_ = new QSplitter(Qt::Horizontal);
-  trackSplitter_->addWidget(leftPane);
-  trackSplitter_->addWidget(commentBox);
-  trackSplitter_->setStretchFactor(0, 1);
-  trackSplitter_->setStretchFactor(1, 2);
-  trackSplitter_->setChildrenCollapsible(false);
-  trackLay->addWidget(trackSplitter_);
-  topLay->addWidget(track, 1);
-  auto *statusRow = new QHBoxLayout;
-  stateLabel_ = new QLabel(QStringLiteral("State: inactive"));
-  lengthLabel_ = new QLabel(QStringLiteral("Duration: —"));
-  idleLabel_ = new QLabel(QStringLiteral("Idle: —"));
-  statusRow->addWidget(stateLabel_);
-  statusRow->addWidget(lengthLabel_);
-  statusRow->addWidget(idleLabel_);
-  statusRow->addStretch();
-  topLay->addLayout(statusRow);
-  splitter_->addWidget(top);
-
-  auto *reports = new QGroupBox(QStringLiteral("Reports"));
-  auto *repLay = new QVBoxLayout(reports);
-  auto *tool = new QHBoxLayout;
-  auto *syncRep = new QPushButton(QStringLiteral("Sync reports"));
-  autoSync_ = new QCheckBox(QStringLiteral("Auto"));
-  autoSync_->setToolTip(QStringLiteral(
-      "When checked, sync reports on app start/exit and after local changes"));
-  autoSync_->setChecked(settings_.get().autoSync);
-  auto *prev = new QPushButton(QStringLiteral("<"));
-  auto *today = new QPushButton(QStringLiteral("Today"));
-  auto *next = new QPushButton(QStringLiteral(">"));
-  prev->setFixedWidth(32);
-  next->setFixedWidth(32);
-  dateEdit_ = new QDateEdit;
-  dateEdit_->setCalendarPopup(true);
-  dateEdit_->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
-  weekday_ = new QLabel;
-  auto *create = new QPushButton(QStringLiteral("Create"));
-  auto *editBtn = new QPushButton(QStringLiteral("Edit"));
-  tool->addWidget(syncRep);
-  tool->addWidget(autoSync_);
-  tool->addWidget(prev);
-  tool->addWidget(today);
-  tool->addWidget(next);
-  tool->addWidget(dateEdit_);
-  tool->addWidget(weekday_);
-  tool->addStretch();
-  tool->addWidget(create);
-  tool->addWidget(editBtn);
-  repLay->addLayout(tool);
-  table_ = new QTableWidget(0, 7);
-  table_->setHorizontalHeaderLabels(
-      {QStringLiteral("Start"), QStringLiteral("Stop"),
-       QStringLiteral("Customer"), QStringLiteral("Project"),
-       QStringLiteral("Duration"), QStringLiteral("Flags"),
-       QStringLiteral("Comment")});
-  for (int col = 0; col < 6; ++col) {
-    table_->horizontalHeader()->setSectionResizeMode(
-        col, QHeaderView::ResizeToContents);
-  }
-  table_->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Stretch);
-  table_->verticalHeader()->setVisible(false);
-  table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-  table_->setSelectionBehavior(QAbstractItemView::SelectRows);
-  table_->setSelectionMode(QAbstractItemView::SingleSelection);
-  table_->setTextElideMode(Qt::ElideRight);
-  repLay->addWidget(table_, 1);
-  splitter_->addWidget(reports);
-  splitter_->setStretchFactor(0, 1);
-  splitter_->setStretchFactor(1, 2);
-  splitter_->setChildrenCollapsible(false);
-  root->addWidget(splitter_, 1);
-  syncLabel_ = new QLabel(QStringLiteral("Sync: not run yet"));
-  root->addWidget(syncLabel_);
-  setCentralWidget(central);
-  statusLabel_ = new QLabel(QStringLiteral("Ready"));
-  statusBar()->addWidget(statusLabel_);
+  connect(form.actionAboutQt, &QAction::triggered, qApp,
+          &QApplication::aboutQt);
 
   tray_ = new QSystemTrayIcon(stateIcon(TrackerState::Inactive), this);
   tray_->setToolTip(windowTitle());
@@ -377,8 +277,10 @@ void MainWindow::buildUi() {
   });
   startClock->start();
   connect(stopBtn_, &QPushButton::clicked, &tracker_, &Tracker::stop);
-  connect(syncCat, &QPushButton::clicked, this, &MainWindow::syncCatalogNow);
-  connect(syncRep, &QPushButton::clicked, this, &MainWindow::syncNow);
+  connect(form.syncCatalogButton, &QPushButton::clicked, this,
+          &MainWindow::syncCatalogNow);
+  connect(form.syncReportsButton, &QPushButton::clicked, this,
+          &MainWindow::syncNow);
   connect(autoSync_, &QCheckBox::toggled, this, [this](bool on) {
     Config cfg = settings_.get();
     if (cfg.autoSync == on) {
@@ -395,17 +297,17 @@ void MainWindow::buildUi() {
       syncNow();
     }
   });
-  connect(prev, &QPushButton::clicked, this,
+  connect(form.prevDayButton, &QPushButton::clicked, this,
           [this] { dateEdit_->setDate(dateEdit_->date().addDays(-1)); });
-  connect(today, &QPushButton::clicked, this,
+  connect(form.todayButton, &QPushButton::clicked, this,
           [this] { dateEdit_->setDate(QDate::currentDate()); });
-  connect(next, &QPushButton::clicked, this,
+  connect(form.nextDayButton, &QPushButton::clicked, this,
           [this] { dateEdit_->setDate(dateEdit_->date().addDays(1)); });
   connect(dateEdit_, &QDateEdit::dateChanged, this, [this](const QDate &day) {
     weekday_->setText(QLocale().dayName(day.dayOfWeek()));
     refreshReports();
   });
-  connect(create, &QPushButton::clicked, this, [this] {
+  connect(form.createButton, &QPushButton::clicked, this, [this] {
     if (showReportDialog(this, store_, nullptr, selectedDay())) {
       refreshReports();
       if (settings_.get().autoSync) {
@@ -438,7 +340,7 @@ void MainWindow::buildUi() {
                             QString::fromUtf8(ex.what()));
     }
   };
-  connect(editBtn, &QPushButton::clicked, this, editCurrent);
+  connect(form.editButton, &QPushButton::clicked, this, editCurrent);
   connect(table_, &QTableWidget::itemDoubleClicked, this, editCurrent);
   connect(comment_, &QTableWidget::itemChanged, this, [this] {
     if (!commentEdit_) {

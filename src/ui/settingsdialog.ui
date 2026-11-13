@@ -1,0 +1,229 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SettingsDialog</class>
+ <widget class="QDialog" name="SettingsDialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>520</width>
+    <height>360</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>ErgoTime Settings</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <widget class="QTabWidget" name="tabs">
+     <widget class="QWidget" name="generalTab">
+      <attribute name="title">
+       <string>General</string>
+      </attribute>
+      <layout class="QFormLayout" name="generalForm">
+       <item row="0" column="0">
+        <widget class="QLabel" name="versionLabel">
+         <property name="text">
+          <string>Version</string>
+         </property>
+         <property name="buddy">
+          <cstring>versionEdit</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <widget class="QLineEdit" name="versionEdit">
+         <property name="readOnly">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="0">
+        <widget class="QLabel" name="usernameLabel">
+         <property name="text">
+          <string>Username</string>
+         </property>
+         <property name="buddy">
+          <cstring>usernameEdit</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QLineEdit" name="usernameEdit"/>
+       </item>
+       <item row="2" column="0">
+        <widget class="QLabel" name="passwordLabel">
+         <property name="text">
+          <string>Password</string>
+         </property>
+         <property name="buddy">
+          <cstring>passwordEdit</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="1">
+        <widget class="QLineEdit" name="passwordEdit">
+         <property name="echoMode">
+          <enum>QLineEdit::EchoMode::Password</enum>
+         </property>
+         <property name="placeholderText">
+          <string>Server password</string>
+         </property>
+        </widget>
+       </item>
+       <item row="3" column="0">
+        <widget class="QLabel" name="idleLabel">
+         <property name="text">
+          <string>Idle timeout</string>
+         </property>
+         <property name="buddy">
+          <cstring>idleSpin</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="3" column="1">
+        <widget class="QSpinBox" name="idleSpin">
+         <property name="suffix">
+          <string> sec</string>
+         </property>
+         <property name="maximum">
+          <number>86400</number>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="0">
+        <widget class="QLabel" name="dataDirLabel">
+         <property name="text">
+          <string>Data directory</string>
+         </property>
+         <property name="buddy">
+          <cstring>dataDirEdit</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="1">
+        <widget class="QLineEdit" name="dataDirEdit">
+         <property name="readOnly">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="catalogTab">
+      <attribute name="title">
+       <string>Catalog</string>
+      </attribute>
+      <layout class="QFormLayout" name="catalogForm">
+       <item row="0" column="0">
+        <widget class="QLabel" name="catalogSyncLabel">
+         <property name="text">
+          <string>Sync interval</string>
+         </property>
+         <property name="buddy">
+          <cstring>catalogSyncSpin</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <widget class="QSpinBox" name="catalogSyncSpin">
+         <property name="specialValueText">
+          <string>disabled</string>
+         </property>
+         <property name="suffix">
+          <string> sec</string>
+         </property>
+         <property name="maximum">
+          <number>86400</number>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="reportTab">
+      <attribute name="title">
+       <string>Report</string>
+      </attribute>
+      <layout class="QFormLayout" name="reportForm">
+       <item row="0" column="0">
+        <widget class="QLabel" name="reportSyncLabel">
+         <property name="text">
+          <string>Sync interval</string>
+         </property>
+         <property name="buddy">
+          <cstring>reportSyncSpin</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <widget class="QSpinBox" name="reportSyncSpin">
+         <property name="specialValueText">
+          <string>disabled</string>
+         </property>
+         <property name="suffix">
+          <string> sec</string>
+         </property>
+         <property name="maximum">
+          <number>86400</number>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="networkTab">
+      <attribute name="title">
+       <string>Network</string>
+      </attribute>
+      <layout class="QFormLayout" name="networkForm">
+       <item row="0" column="0">
+        <widget class="QLabel" name="serverLabel">
+         <property name="text">
+          <string>Server URL</string>
+         </property>
+         <property name="buddy">
+          <cstring>serverEdit</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <widget class="QLineEdit" name="serverEdit"/>
+       </item>
+       <item row="1" column="0">
+        <widget class="QLabel" name="timeoutLabel">
+         <property name="text">
+          <string>Network timeout</string>
+         </property>
+         <property name="buddy">
+          <cstring>networkTimeoutSpin</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QSpinBox" name="networkTimeoutSpin">
+         <property name="suffix">
+          <string> sec</string>
+         </property>
+         <property name="minimum">
+          <number>1</number>
+         </property>
+         <property name="maximum">
+          <number>600</number>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttonBox">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::StandardButton::Cancel|QDialogButtonBox::StandardButton::Ok</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
