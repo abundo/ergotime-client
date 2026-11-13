@@ -18,6 +18,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStringList>
 #include <QStyledItemDelegate>
 #include <QTabWidget>
 #include <QTableWidget>
@@ -374,14 +375,19 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
   for (auto *dt : {dtStart, dtStop}) {
     dt->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm"));
     dt->setCalendarPopup(true);
+    if (!isNew) {
+      dt->setToolTip(QStringLiteral(
+          "Changing the date asks for confirmation when you save."));
+    }
   }
+  // Edit remembers the dates last accepted. A different day asks on save.
+  // Create does not ask.
+  QDate acceptedStart = dtStart->date();
+  QDate acceptedStop = dtStop->date();
   auto *len = new QLabel;
   auto updateLen = [&] {
     if (dtStop->dateTime() < dtStart->dateTime()) {
       dtStop->setDateTime(dtStart->dateTime());
-    }
-    if (dtStart->dateTime().secsTo(dtStop->dateTime()) > 24 * 3600) {
-      dtStop->setDateTime(dtStart->dateTime().addSecs(24 * 3600));
     }
     len->setText(
         formatDurationHms(dtStart->dateTime().msecsTo(dtStop->dateTime())));
@@ -469,6 +475,47 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
           QStringLiteral("Please select a customer with a project."));
       return;
     }
+    if (!isNew) {
+      const QDate startDay = dtStart->date();
+      const QDate stopDay = dtStop->date();
+      const bool startChanged = startDay != acceptedStart;
+      const bool stopChanged = stopDay != acceptedStop;
+      if (startChanged || stopChanged) {
+        QStringList lines;
+        if (startChanged) {
+          lines << QStringLiteral("Start date changed from %1 to %2.")
+                       .arg(acceptedStart.toString(Qt::ISODate),
+                            startDay.toString(Qt::ISODate));
+        }
+        if (stopChanged) {
+          lines << QStringLiteral("Stop date changed from %1 to %2.")
+                       .arg(acceptedStop.toString(Qt::ISODate),
+                            stopDay.toString(Qt::ISODate));
+        }
+        lines << QString();
+        lines << QStringLiteral("Was that intended?");
+        const auto answer = QMessageBox::question(
+            &dlg, QStringLiteral("Change report date?"),
+            lines.join(QLatin1Char('\n')), QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (answer != QMessageBox::Yes) {
+          if (startChanged) {
+            QDateTime dt = dtStart->dateTime();
+            dt.setDate(acceptedStart);
+            dtStart->setDateTime(dt);
+          }
+          if (stopChanged) {
+            QDateTime dt = dtStop->dateTime();
+            dt.setDate(acceptedStop);
+            dtStop->setDateTime(dt);
+          }
+          updateLen();
+          return;
+        }
+        acceptedStart = dtStart->date();
+        acceptedStop = dtStop->date();
+      }
+    }
     QDateTime start = dtStart->dateTime();
     QDateTime stop = dtStop->dateTime();
     start.setTime(QTime(start.time().hour(), start.time().minute(),
@@ -481,10 +528,10 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
           QStringLiteral("Stop time must be after start time."));
       return;
     }
-    if (start.secsTo(stop) > 24 * 3600) {
+    if (start.secsTo(stop) >= 24 * 3600) {
       QMessageBox::warning(
           &dlg, QStringLiteral("Save report"),
-          QStringLiteral("Report cannot be longer than 24 hours."));
+          QStringLiteral("Report cannot be 24 hours or longer."));
       return;
     }
     r.start = start;

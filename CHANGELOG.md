@@ -14,6 +14,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Changed
 
+- Creating or editing a report refuses a length of 24 hours or more. The start and stop stay as entered, and Save explains why it did not store the report.
+- Changing the date on Started, or the start or stop date while editing a report, asks whether that was intended. The time can still be changed directly. Creating a report still edits the date without asking.
 - A report is a customer and a time range. The comment area is a table of that customer's projects. The default project is preselected. Comments on several projects share the one interval. Comments on a single project keep the whole interval on that project.
 - Sync protocol is 2. Protocol 1 servers are refused, because a report can now carry several project comments.
 

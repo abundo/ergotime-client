@@ -218,9 +218,10 @@ void MainWindow::buildUi() {
   startEdit_ = new QDateTimeEdit(QDateTime::currentDateTime());
   startEdit_->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm"));
   startEdit_->setCalendarPopup(true);
+  startDateBaseline_ = startEdit_->date();
   startEdit_->setToolTip(QStringLiteral(
       "When this time entry started. Change it before Start, or while "
-      "tracking is running."));
+      "tracking is running. Changing the date asks for confirmation."));
   startRow->addWidget(startEdit_, 1);
   left->addLayout(startRow);
   auto *buttons = new QHBoxLayout;
@@ -353,8 +354,13 @@ void MainWindow::buildUi() {
       startTimeEdited_ = true;
     }
   });
-  connect(startEdit_, &QDateTimeEdit::editingFinished, this,
-          [this] { applyStartAdjustment(); });
+  connect(startEdit_, &QDateTimeEdit::editingFinished, this, [this] {
+    if (dateConfirmOpen_) {
+      return;
+    }
+    confirmStartDateChange();
+    applyStartAdjustment();
+  });
   auto *startClock = new QTimer(this);
   startClock->setInterval(1000);
   connect(startClock, &QTimer::timeout, this, [this] {
@@ -367,6 +373,7 @@ void MainWindow::buildUi() {
     }
     const QSignalBlocker block(startEdit_);
     startEdit_->setDateTime(QDateTime::currentDateTime());
+    startDateBaseline_ = startEdit_->date();
   });
   startClock->start();
   connect(stopBtn_, &QPushButton::clicked, &tracker_, &Tracker::stop);
@@ -583,6 +590,7 @@ void MainWindow::beginTracking() {
         QStringLiteral("Select a customer that has a project."));
     return;
   }
+  confirmStartDateChange();
   const QDateTime now = wholeSecond(QDateTime::currentDateTime());
   QDateTime start = now;
   if (startTimeEdited_) {
@@ -636,6 +644,33 @@ void MainWindow::pushDraft() {
   tracker_.setDraft(draft);
 }
 
+void MainWindow::confirmStartDateChange() {
+  if (dateConfirmOpen_) {
+    return;
+  }
+  const QDate edited = startEdit_->date();
+  if (!startDateBaseline_.isValid() || edited == startDateBaseline_) {
+    return;
+  }
+  dateConfirmOpen_ = true;
+  const auto answer = QMessageBox::question(
+      this, QStringLiteral("Change start date?"),
+      QStringLiteral("The start date changed from %1 to %2.\n\n"
+                     "Was that intended?")
+          .arg(startDateBaseline_.toString(Qt::ISODate),
+               edited.toString(Qt::ISODate)),
+      QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+  dateConfirmOpen_ = false;
+  if (answer == QMessageBox::Yes) {
+    startDateBaseline_ = edited;
+    return;
+  }
+  QDateTime dt = startEdit_->dateTime();
+  dt.setDate(startDateBaseline_);
+  const QSignalBlocker block(startEdit_);
+  startEdit_->setDateTime(dt);
+}
+
 void MainWindow::applyStartAdjustment() {
   if (tracker_.state() != TrackerState::Active) {
     return;
@@ -658,6 +693,7 @@ void MainWindow::applyStartAdjustment() {
                          QStringLiteral("Start time cannot be in the future."));
     const QSignalBlocker block(startEdit_);
     startEdit_->setDateTime(current);
+    startDateBaseline_ = current.date();
     return;
   }
   tracker_.setStart(start);
@@ -675,6 +711,7 @@ void MainWindow::setTrackerState(TrackerState state) {
     if (const Report *running = tracker_.report()) {
       const QSignalBlocker block(startEdit_);
       startEdit_->setDateTime(running->start.toLocalTime());
+      startDateBaseline_ = startEdit_->date();
     }
     lockedCust_ = selectedId(customers_);
     lockedProj_ = 0;
@@ -691,6 +728,7 @@ void MainWindow::setTrackerState(TrackerState state) {
     {
       const QSignalBlocker block(startEdit_);
       startEdit_->setDateTime(QDateTime::currentDateTime());
+      startDateBaseline_ = startEdit_->date();
     }
     lengthLabel_->setText(QStringLiteral("Duration: —"));
     idleLabel_->setText(QStringLiteral("Idle: —"));

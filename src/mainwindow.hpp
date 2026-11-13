@@ -48,6 +48,9 @@ private:
   void pushDraft();
   void beginTracking();
   void applyStartAdjustment();
+  // Started follows startDateBaseline_ until the user picks another day.
+  // A different day asks before it is kept. Time edits do not ask.
+  void confirmStartDateChange();
   void refreshReports();
   void refreshSyncStatus();
   void rebuildTray();
@@ -91,4 +94,6 @@ private:
   // True once the user edits the start field while tracking is inactive.
   // Until then the field follows the clock and Start uses the current second.
   bool startTimeEdited_ = false;
+  QDate startDateBaseline_;
+  bool dateConfirmOpen_ = false;
 };
