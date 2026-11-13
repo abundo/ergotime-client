@@ -1,5 +1,7 @@
 #include "dialogs.hpp"
 
+#include "version.hpp"
+
 #include <QComboBox>
 #include <QDateTimeEdit>
 #include <QDialog>
@@ -235,6 +237,9 @@ std::optional<Config> showSettingsDialog(QWidget *parent, const Config &cfg) {
   idle->setSuffix(QStringLiteral(" sec"));
   auto *dataDir = new QLineEdit(cfg.dataDir);
   dataDir->setReadOnly(true);
+  auto *version = new QLineEdit(ergotimeVersion());
+  version->setReadOnly(true);
+  genForm->addRow(QStringLiteral("Version"), version);
   genForm->addRow(QStringLiteral("Username"), username);
   genForm->addRow(QStringLiteral("Password"), password);
   genForm->addRow(QStringLiteral("Idle timeout"), idle);

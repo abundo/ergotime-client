@@ -15,8 +15,9 @@ that fits cleanly now. Go on only once they've chosen.
 Each layer talks only to the one under it.
 
 - `domain` is the shared types: customer, project, report, report line, times.
-- `store` is the only SQLite access. Schema matches the Go client so both can
-  share `~/.ergotime2/ergotime.db`.
+- `store` is the only SQLite access. Schema matches the Go client so a release
+  build can share `~/.ergotime2/ergotime.db`. A version string with a git SHA-1
+  uses `~/.ergotime2-dev`.
 - `sync` (`Engine`) is the only HTTP. It pushes pending ops, pulls by `seq`, and
   pulls the catalog.
 - `tracker` starts and stops the running report and applies the idle timeout.

@@ -19,7 +19,12 @@ public:
   void setComment(const QString &comment);
   void setDraft(const Report &draft);
   void setIdleTimeoutMs(int ms);
-  void start(const Report &draft);
+  // startedAt is the local time the interval began. An invalid value means now.
+  void start(const Report &draft, const QDateTime &startedAt = {});
+  // Move the running interval's start. Ignored when inactive or when startedAt
+  // is invalid or later than the current second.
+  void setStart(const QDateTime &startedAt);
+  const Report *report() const { return report_ ? &*report_ : nullptr; }
   void stop();
 
 signals:

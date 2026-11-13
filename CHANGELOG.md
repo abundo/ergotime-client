@@ -19,6 +19,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Added
 
+- The window title, tray tooltip, About dialog, and settings show the version. A clean build of the matching `vX.Y.Z` tag shows `X.Y.Z` and keeps using `~/.ergotime2`. Any other build appends `+` and the git SHA-1, and that suffix stores settings and the database in `~/.ergotime2-dev`.
+- The time-tracking panel has a Started date and time. It follows the clock until edited. Start uses that time, and the field stays editable while the entry is running. A time in the future is refused.
+- A divider between the customer side and the comment can be dragged. Its position is saved when the program exits.
 - Static release binaries are stripped and packed with UPX, so the download stays an executable. Linux, Windows, and macOS builds all go through `scripts/pack-upx.sh`.
 - Sync refuses to pull or push unless `/healthz` advertises sync protocol 2. A missing number or any other number stops the sync before catalog or report changes, with a message naming the protocol this client speaks.
 - Linux idle detection through Wayland `ext-idle-notifier-v1` (KWin, Sway, Hyprland, niri, labwc, river). The client tries this before GNOME Mutter `IdleMonitor` and `org.freedesktop.ScreenSaver`. Version 2 of the protocol uses input idle, so a video idle inhibitor does not keep a running report open.

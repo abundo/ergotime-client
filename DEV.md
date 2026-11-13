@@ -1,7 +1,9 @@
 # Development
 
-Official desktop client. Data lives in `~/.ergotime2` (`config.json` and
-`ergotime.db`), shared with the old Go client. Release notes are in
+Official desktop client. A tagged release keeps data in `~/.ergotime2`
+(`config.json` and `ergotime.db`), shared with the old Go client. Any other
+build puts the git SHA-1 in the version and uses `~/.ergotime2-dev`, so a
+development run does not open the release database. Release notes are in
 `CHANGELOG.md`. User-facing build steps are in `README.md`.
 
 # Prerequisites
@@ -50,6 +52,6 @@ make
 `make static` links `$HOME/Qt/static/6.12.0` into `build/ergotime-static`.
 `ldd` on that binary should show system libraries only, not `libQt6` or ICU.
 
-There is no unit-test target. Check a change by building and running against
-`~/.ergotime2`. An offscreen smoke run is
+There is no unit-test target. Check a change by building and running. A
+development build uses `~/.ergotime2-dev`. An offscreen smoke run is
 `QT_QPA_PLATFORM=offscreen ./build/ergotime`.

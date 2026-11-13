@@ -6,7 +6,9 @@
 
 #include <mutex>
 
-// Config is the JSON document shared with the Go client under ~/.ergotime2.
+// Config is the JSON document shared with the Go client. A release build
+// reads it from ~/.ergotime2. A build whose version includes a git SHA-1
+// reads it from ~/.ergotime2-dev.
 struct Config {
   QString serverUrl;
   QString username;
@@ -19,6 +21,7 @@ struct Config {
   QVector<qint64> recentCustomerIds;
   QByteArray windowGeometry;
   QByteArray splitterState;
+  QByteArray trackSplitterState;
   QString dataDir;
   QString database;
   QString configPath;
@@ -41,7 +44,8 @@ public:
 
   Config get() const;
   void update(const Config &cfg);
-  void saveWindowLayout(const QByteArray &geometry, const QByteArray &splitter);
+  void saveWindowLayout(const QByteArray &geometry, const QByteArray &splitter,
+                        const QByteArray &trackSplitter);
   void touchRecentCustomer(qint64 id);
 
 private:

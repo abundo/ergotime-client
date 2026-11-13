@@ -24,7 +24,8 @@ WIN_MOC := $(QT_HOST_PATH)/libexec/moc
 PKG_CONFIG_PATH := $(QT_PREFIX)/lib/pkgconfig
 export PKG_CONFIG_PATH
 
-SRC := src/main.cpp src/settings.cpp src/store.cpp src/idle.cpp src/tracker.cpp src/sync.cpp src/dialogs.cpp src/mainwindow.cpp
+SRC := src/main.cpp src/settings.cpp src/store.cpp src/idle.cpp src/tracker.cpp src/sync.cpp src/dialogs.cpp src/mainwindow.cpp src/version.cpp
+VERSION_CPP := build/version.cpp
 MOC_SRC := build/moc_mainwindow.cpp build/moc_tracker.cpp build/moc_engine.cpp
 
 ifneq ($(wildcard $(QT_PREFIX)/lib/pkgconfig/Qt6Widgets.pc),)
@@ -34,12 +35,18 @@ CXXFLAGS += -DERGOTIME_HAS_DBUS=1
 LDFLAGS := -Wl,-rpath,$(QT_PREFIX)/lib
 endif
 
-.PHONY: all clean static static-windows install-qt-static static-container static-windows-container
+.PHONY: all clean static static-windows install-qt-static static-container static-windows-container FORCE
 
 all: build/ergotime
 
-build/ergotime: $(SRC) $(MOC_SRC)
-	$(CXX) $(CXXFLAGS) -Isrc -Ibuild -o $@ $(SRC) $(MOC_SRC) $(LIBS) $(LDFLAGS)
+# Regenerated every build. The script keeps the file when the version string
+# is unchanged, so a stable sha does not relink.
+$(VERSION_CPP): FORCE
+	@mkdir -p build
+	@./scripts/write-version-cpp.sh $@
+
+build/ergotime: $(SRC) $(MOC_SRC) $(VERSION_CPP)
+	$(CXX) $(CXXFLAGS) -Isrc -Ibuild -o $@ $(SRC) $(MOC_SRC) $(VERSION_CPP) $(LIBS) $(LDFLAGS)
 
 build/moc_mainwindow.cpp: src/mainwindow.hpp | build
 	$(MOC) $(shell pkg-config --cflags Qt6Widgets) src/mainwindow.hpp -o $@
@@ -53,12 +60,12 @@ build/moc_engine.cpp: src/sync.hpp | build
 build/static_plugins.cpp: $(QT_STATIC_PREFIX)/lib/libQt6Core.a scripts/qt-static.py | build
 	python3 scripts/qt-static.py plugins $(QT_STATIC_PREFIX) $@
 
-build/ergotime-static: $(SRC) build/static_plugins.cpp | build
+build/ergotime-static: $(SRC) build/static_plugins.cpp $(VERSION_CPP) | build
 	$(STATIC_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_STATIC_PREFIX)) src/mainwindow.hpp -o build/moc_mainwindow.cpp
 	$(STATIC_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_STATIC_PREFIX)) src/tracker.hpp -o build/moc_tracker.cpp
 	$(STATIC_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_STATIC_PREFIX)) src/sync.hpp -o build/moc_engine.cpp
 	$(CXX) $(shell python3 scripts/qt-static.py cflags $(QT_STATIC_PREFIX)) -Isrc -Ibuild -o $@ \
-		$(SRC) $(MOC_SRC) build/static_plugins.cpp \
+		$(SRC) $(MOC_SRC) $(VERSION_CPP) build/static_plugins.cpp \
 		$(shell python3 scripts/qt-static.py ldflags $(QT_STATIC_PREFIX)) \
 		-static-libgcc -static-libstdc++
 	@if ldd $@ | grep -E 'libQt6|libicu'; then echo 'error: binary still depends on Qt or ICU shared libraries'; exit 1; fi
@@ -67,12 +74,12 @@ build/ergotime-static: $(SRC) build/static_plugins.cpp | build
 build/windows_plugins.cpp: $(QT_WINDOWS_PREFIX)/lib/libQt6Core.a scripts/qt-static.py | build
 	NM=$(MINGW_NM) python3 scripts/qt-static.py plugins $(QT_WINDOWS_PREFIX) $@
 
-build/ergotime.exe: $(SRC) build/windows_plugins.cpp | build
+build/ergotime.exe: $(SRC) build/windows_plugins.cpp $(VERSION_CPP) | build
 	$(WIN_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_WINDOWS_PREFIX)) src/mainwindow.hpp -o build/moc_mainwindow.cpp
 	$(WIN_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_WINDOWS_PREFIX)) src/tracker.hpp -o build/moc_tracker.cpp
 	$(WIN_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_WINDOWS_PREFIX)) src/sync.hpp -o build/moc_engine.cpp
 	$(MINGW_CXX) $(shell python3 scripts/qt-static.py cflags $(QT_WINDOWS_PREFIX)) -Isrc -Ibuild -o $@ \
-		$(SRC) $(MOC_SRC) build/windows_plugins.cpp \
+		$(SRC) $(MOC_SRC) $(VERSION_CPP) build/windows_plugins.cpp \
 		$(shell NM=$(MINGW_NM) python3 scripts/qt-static.py ldflags $(QT_WINDOWS_PREFIX)) \
 		-mwindows -static-libgcc -static-libstdc++
 	MINGW_STRIP=$(MINGW_CXX:%g++=%strip) ./scripts/pack-upx.sh $@
@@ -89,6 +96,8 @@ static-container:
 
 static-windows-container:
 	./scripts/container-build-windows.sh
+
+FORCE:
 
 build:
 	mkdir -p build

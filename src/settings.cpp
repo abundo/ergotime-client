@@ -1,5 +1,7 @@
 #include "settings.hpp"
 
+#include "version.hpp"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -18,7 +20,7 @@ Config defaults() {
     home = QStringLiteral(".");
   }
   Config c;
-  c.dataDir = home + QStringLiteral("/.ergotime2");
+  c.dataDir = home + QLatin1Char('/') + ergotimeDefaultDataDirName();
   c.database = c.dataDir + QStringLiteral("/ergotime.db");
   c.configPath = c.dataDir + QStringLiteral("/config.json");
   c.serverUrl = QStringLiteral("http://localhost:8080");
@@ -80,6 +82,8 @@ Settings::Settings() {
       o.value(QStringLiteral("window_geometry")).toString().toLatin1());
   loaded.splitterState = QByteArray::fromBase64(
       o.value(QStringLiteral("splitter_state")).toString().toLatin1());
+  loaded.trackSplitterState = QByteArray::fromBase64(
+      o.value(QStringLiteral("track_splitter_state")).toString().toLatin1());
   loaded.dataDir = o.value(QStringLiteral("data_dir")).toString();
   loaded.database = o.value(QStringLiteral("database")).toString();
   if (loaded.dataDir.isEmpty()) {
@@ -122,10 +126,12 @@ void Settings::update(const Config &cfg) {
 }
 
 void Settings::saveWindowLayout(const QByteArray &geometry,
-                                const QByteArray &splitter) {
+                                const QByteArray &splitter,
+                                const QByteArray &trackSplitter) {
   std::lock_guard lock(mu_);
   cfg_.windowGeometry = geometry;
   cfg_.splitterState = splitter;
+  cfg_.trackSplitterState = trackSplitter;
   saveLocked();
 }
 
@@ -177,6 +183,10 @@ void Settings::saveLocked() {
   if (!cfg_.splitterState.isEmpty()) {
     o.insert(QStringLiteral("splitter_state"),
              QString::fromLatin1(cfg_.splitterState.toBase64()));
+  }
+  if (!cfg_.trackSplitterState.isEmpty()) {
+    o.insert(QStringLiteral("track_splitter_state"),
+             QString::fromLatin1(cfg_.trackSplitterState.toBase64()));
   }
   if (!cfg_.dataDir.isEmpty()) {
     o.insert(QStringLiteral("data_dir"), cfg_.dataDir);

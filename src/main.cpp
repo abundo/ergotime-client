@@ -1,5 +1,7 @@
 #include "mainwindow.hpp"
 
+#include "version.hpp"
+
 #include <QApplication>
 
 #include <exception>
@@ -8,6 +10,7 @@
 int main(int argc, char *argv[]) {
   QApplication app(argc, argv);
   QApplication::setApplicationName(QStringLiteral("ErgoTime"));
+  QApplication::setApplicationVersion(ergotimeVersion());
   QApplication::setOrganizationName(QStringLiteral("Abundo AB"));
   QApplication::setOrganizationDomain(QStringLiteral("abundo.se"));
   QApplication::setDesktopFileName(QStringLiteral("ergotime"));

@@ -1,11 +1,14 @@
 #include "mainwindow.hpp"
 
 #include "dialogs.hpp"
+#include "version.hpp"
 
 #include <QApplication>
+#include <QCalendarWidget>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QDateEdit>
+#include <QDateTimeEdit>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHash>
@@ -18,12 +21,14 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTableWidget>
 #include <QTextEdit>
 #include <QThread>
 #include <QTimeZone>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <thread>
@@ -60,13 +65,22 @@ qint64 itemId(QListWidgetItem *item) {
   return item->data(Qt::UserRole).toLongLong();
 }
 
+QDateTime wholeSecond(QDateTime t) {
+  if (!t.isValid()) {
+    return {};
+  }
+  const QTime time = t.time();
+  t.setTime(QTime(time.hour(), time.minute(), time.second()));
+  return t;
+}
+
 } // namespace
 
 MainWindow::MainWindow(Settings &settings, Store &store, Engine &engine,
                        Tracker &tracker, QWidget *parent)
     : QMainWindow(parent), settings_(settings), store_(store), engine_(engine),
       tracker_(tracker) {
-  setWindowTitle(QStringLiteral("ErgoTime"));
+  setWindowTitle(QStringLiteral("ErgoTime %1").arg(ergotimeVersion()));
   resize(820, 560);
   setWindowIcon(stateIcon(TrackerState::Inactive));
   buildUi();
@@ -106,6 +120,9 @@ MainWindow::MainWindow(Settings &settings, Store &store, Engine &engine,
   }
   if (!cfg.splitterState.isEmpty()) {
     splitter_->restoreState(cfg.splitterState);
+  }
+  if (!cfg.trackSplitterState.isEmpty()) {
+    trackSplitter_->restoreState(cfg.trackSplitterState);
   }
   refreshCatalog();
   dateEdit_->setDate(QDate::currentDate());
@@ -171,9 +188,11 @@ void MainWindow::buildUi() {
   help->addAction(QStringLiteral("About ErgoTime"), this, [this] {
     QMessageBox::about(
         this, QStringLiteral("About ErgoTime"),
-        QStringLiteral("<h3>ErgoTime</h3><p>Desktop time tracker with offline "
-                       "support and server sync.</p>"
-                       "<p>C++ / Qt 6 client. License: GPLv3</p>"));
+        QStringLiteral(
+            "<h3>ErgoTime %1</h3><p>Desktop time tracker with offline "
+            "support and server sync.</p>"
+            "<p>C++ / Qt 6 client. License: GPLv3</p>")
+            .arg(ergotimeVersion()));
   });
   help->addAction(QStringLiteral("About Qt"), qApp, &QApplication::aboutQt);
 
@@ -185,18 +204,25 @@ void MainWindow::buildUi() {
   auto *topLay = new QVBoxLayout(top);
   topLay->setContentsMargins(0, 0, 0, 0);
   auto *track = new QGroupBox(QStringLiteral("Time tracking"));
-  auto *trackLay = new QHBoxLayout(track);
-  auto *left = new QVBoxLayout;
-  auto *lists = new QHBoxLayout;
-  auto *custCol = new QVBoxLayout;
-  custCol->addWidget(new QLabel(QStringLiteral("Customer")));
+  auto *trackLay = new QVBoxLayout(track);
+  auto *leftPane = new QWidget;
+  auto *left = new QVBoxLayout(leftPane);
+  left->setContentsMargins(0, 0, 0, 0);
+  left->addWidget(new QLabel(QStringLiteral("Customer")));
   customers_ = new QListWidget;
-  customers_->setFixedWidth(200);
   customers_->setToolTip(
       QStringLiteral("Recently used customers appear at the top"));
-  custCol->addWidget(customers_, 1);
-  lists->addLayout(custCol);
-  left->addLayout(lists, 1);
+  left->addWidget(customers_, 1);
+  auto *startRow = new QHBoxLayout;
+  startRow->addWidget(new QLabel(QStringLiteral("Started")));
+  startEdit_ = new QDateTimeEdit(QDateTime::currentDateTime());
+  startEdit_->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm"));
+  startEdit_->setCalendarPopup(true);
+  startEdit_->setToolTip(QStringLiteral(
+      "When this time entry started. Change it before Start, or while "
+      "tracking is running."));
+  startRow->addWidget(startEdit_, 1);
+  left->addLayout(startRow);
   auto *buttons = new QHBoxLayout;
   startBtn_ = new QPushButton(QStringLiteral("Start"));
   stopBtn_ = new QPushButton(QStringLiteral("Stop"));
@@ -208,7 +234,6 @@ void MainWindow::buildUi() {
   buttons->addWidget(syncCat);
   buttons->addStretch();
   left->addLayout(buttons);
-  trackLay->addLayout(left);
   auto *commentBox = new QGroupBox(QStringLiteral("Comment"));
   auto *commentLay = new QVBoxLayout(commentBox);
   comment_ = new QTableWidget(0, 2);
@@ -225,7 +250,13 @@ void MainWindow::buildUi() {
       "The highlighted project is used when every comment is empty. "
       "Comments on several projects share this interval."));
   commentLay->addWidget(comment_);
-  trackLay->addWidget(commentBox, 1);
+  trackSplitter_ = new QSplitter(Qt::Horizontal);
+  trackSplitter_->addWidget(leftPane);
+  trackSplitter_->addWidget(commentBox);
+  trackSplitter_->setStretchFactor(0, 1);
+  trackSplitter_->setStretchFactor(1, 2);
+  trackSplitter_->setChildrenCollapsible(false);
+  trackLay->addWidget(trackSplitter_);
   topLay->addWidget(track, 1);
   auto *statusRow = new QHBoxLayout;
   stateLabel_ = new QLabel(QStringLiteral("State: inactive"));
@@ -297,7 +328,7 @@ void MainWindow::buildUi() {
   statusBar()->addWidget(statusLabel_);
 
   tray_ = new QSystemTrayIcon(stateIcon(TrackerState::Inactive), this);
-  tray_->setToolTip(QStringLiteral("ErgoTime"));
+  tray_->setToolTip(windowTitle());
   trayMenu_ = new QMenu(this);
   tray_->setContextMenu(trayMenu_);
   tray_->show();
@@ -317,6 +348,27 @@ void MainWindow::buildUi() {
     }
   });
   connect(startBtn_, &QPushButton::clicked, this, [this] { beginTracking(); });
+  connect(startEdit_, &QDateTimeEdit::dateTimeChanged, this, [this] {
+    if (tracker_.state() != TrackerState::Active) {
+      startTimeEdited_ = true;
+    }
+  });
+  connect(startEdit_, &QDateTimeEdit::editingFinished, this,
+          [this] { applyStartAdjustment(); });
+  auto *startClock = new QTimer(this);
+  startClock->setInterval(1000);
+  connect(startClock, &QTimer::timeout, this, [this] {
+    if (tracker_.state() == TrackerState::Active || startTimeEdited_ ||
+        startEdit_->hasFocus()) {
+      return;
+    }
+    if (auto *cal = startEdit_->calendarWidget(); cal && cal->isVisible()) {
+      return;
+    }
+    const QSignalBlocker block(startEdit_);
+    startEdit_->setDateTime(QDateTime::currentDateTime());
+  });
+  startClock->start();
   connect(stopBtn_, &QPushButton::clicked, &tracker_, &Tracker::stop);
   connect(syncCat, &QPushButton::clicked, this, &MainWindow::syncCatalogNow);
   connect(syncRep, &QPushButton::clicked, this, &MainWindow::syncNow);
@@ -405,7 +457,8 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 }
 
 void MainWindow::saveLayout() {
-  settings_.saveWindowLayout(saveGeometry(), splitter_->saveState());
+  settings_.saveWindowLayout(saveGeometry(), splitter_->saveState(),
+                             trackSplitter_->saveState());
 }
 
 void MainWindow::quitApp() {
@@ -530,7 +583,18 @@ void MainWindow::beginTracking() {
         QStringLiteral("Select a customer that has a project."));
     return;
   }
-  tracker_.start(draft);
+  const QDateTime now = wholeSecond(QDateTime::currentDateTime());
+  QDateTime start = now;
+  if (startTimeEdited_) {
+    start = wholeSecond(startEdit_->dateTime());
+    start.setTime(QTime(start.time().hour(), start.time().minute(), 0));
+  }
+  if (!start.isValid() || start > now) {
+    QMessageBox::warning(this, QStringLiteral("Start"),
+                         QStringLiteral("Start time cannot be in the future."));
+    return;
+  }
+  tracker_.start(draft, start);
   if (draft.customerId > 0) {
     settings_.touchRecentCustomer(draft.customerId);
     refreshCatalog();
@@ -572,6 +636,33 @@ void MainWindow::pushDraft() {
   tracker_.setDraft(draft);
 }
 
+void MainWindow::applyStartAdjustment() {
+  if (tracker_.state() != TrackerState::Active) {
+    return;
+  }
+  const Report *running = tracker_.report();
+  if (!running) {
+    return;
+  }
+  QDateTime start = wholeSecond(startEdit_->dateTime());
+  start.setTime(QTime(start.time().hour(), start.time().minute(), 0));
+  const QDateTime current = running->start.toLocalTime();
+  if (start.date() == current.date() &&
+      start.time().hour() == current.time().hour() &&
+      start.time().minute() == current.time().minute()) {
+    return;
+  }
+  const QDateTime now = wholeSecond(QDateTime::currentDateTime());
+  if (!start.isValid() || start > now) {
+    QMessageBox::warning(this, QStringLiteral("Start"),
+                         QStringLiteral("Start time cannot be in the future."));
+    const QSignalBlocker block(startEdit_);
+    startEdit_->setDateTime(current);
+    return;
+  }
+  tracker_.setStart(start);
+}
+
 void MainWindow::setTrackerState(TrackerState state) {
   stateLabel_->setText(
       QStringLiteral("State: %1").arg(trackerStateName(state)));
@@ -581,6 +672,10 @@ void MainWindow::setTrackerState(TrackerState state) {
   customers_->setEnabled(true);
   listsLocked_ = active;
   if (active) {
+    if (const Report *running = tracker_.report()) {
+      const QSignalBlocker block(startEdit_);
+      startEdit_->setDateTime(running->start.toLocalTime());
+    }
     lockedCust_ = selectedId(customers_);
     lockedProj_ = 0;
     if (comment_->currentRow() >= 0 &&
@@ -592,6 +687,11 @@ void MainWindow::setTrackerState(TrackerState state) {
   } else {
     lockedCust_ = 0;
     lockedProj_ = 0;
+    startTimeEdited_ = false;
+    {
+      const QSignalBlocker block(startEdit_);
+      startEdit_->setDateTime(QDateTime::currentDateTime());
+    }
     lengthLabel_->setText(QStringLiteral("Duration: —"));
     idleLabel_->setText(QStringLiteral("Idle: —"));
     fillCommentTable(selectedId(customers_), 0);

@@ -4,6 +4,19 @@
 
 #include <exception>
 
+namespace {
+
+QDateTime wholeSecond(QDateTime t) {
+  if (!t.isValid()) {
+    return {};
+  }
+  const QTime time = t.time();
+  t.setTime(QTime(time.hour(), time.minute(), time.second()));
+  return t;
+}
+
+} // namespace
+
 Tracker::Tracker(Store &store, int idleTimeoutMs, QObject *parent)
     : QObject(parent), store_(store), idle_(Idle::create()),
       idleTimeoutMs_(idleTimeoutMs > 0 ? idleTimeoutMs : 600000) {
@@ -40,14 +53,18 @@ void Tracker::setIdleTimeoutMs(int ms) {
   }
 }
 
-void Tracker::start(const Report &draft) {
+void Tracker::start(const Report &draft, const QDateTime &startedAt) {
   if (state_ == TrackerState::Active) {
     return;
   }
   if (draft.projectId <= 0) {
     return;
   }
-  const QDateTime now = QDateTime::currentDateTime().toLocalTime();
+  const QDateTime now = wholeSecond(QDateTime::currentDateTime());
+  QDateTime start = startedAt.isValid() ? wholeSecond(startedAt) : now;
+  if (!start.isValid() || start > now) {
+    start = now;
+  }
   Report r = draft;
   r.id = 0;
   r.serverId = -1;
@@ -56,8 +73,7 @@ void Tracker::start(const Report &draft) {
   r.deleted = false;
   r.conflict = false;
   r.clientUuid.clear();
-  r.start = QDateTime(now.date(), QTime(now.time().hour(), now.time().minute(),
-                                        now.time().second()));
+  r.start = start;
   r.stop.reset();
   r.modified = r.start;
   if (r.comment.isNull()) {
@@ -74,6 +90,24 @@ void Tracker::start(const Report &draft) {
   report_ = r;
   setState(TrackerState::Active);
   timer_.start();
+}
+
+void Tracker::setStart(const QDateTime &startedAt) {
+  if (state_ != TrackerState::Active || !report_) {
+    return;
+  }
+  const QDateTime now = wholeSecond(QDateTime::currentDateTime());
+  const QDateTime start = wholeSecond(startedAt);
+  if (!start.isValid() || start > now) {
+    return;
+  }
+  report_->start = start;
+  Status st;
+  st.idleMs = idle_ ? idle_->idleMs() : 0;
+  st.lengthMs = report_->durationMs(now);
+  st.project = project_;
+  st.report = report_;
+  emit statusChanged(st);
 }
 
 void Tracker::stop() {

@@ -16,6 +16,7 @@
 
 class QCheckBox;
 class QDateEdit;
+class QDateTimeEdit;
 class QLabel;
 class QListWidget;
 class QMenu;
@@ -46,6 +47,7 @@ private:
   void fillCommentTable(qint64 customerId, qint64 anchorId);
   void pushDraft();
   void beginTracking();
+  void applyStartAdjustment();
   void refreshReports();
   void refreshSyncStatus();
   void rebuildTray();
@@ -60,9 +62,11 @@ private:
   Tracker &tracker_;
 
   QSplitter *splitter_ = nullptr;
+  QSplitter *trackSplitter_ = nullptr;
   QListWidget *customers_ = nullptr;
   QPushButton *startBtn_ = nullptr;
   QPushButton *stopBtn_ = nullptr;
+  QDateTimeEdit *startEdit_ = nullptr;
   QTableWidget *comment_ = nullptr;
   QLabel *stateLabel_ = nullptr;
   QLabel *lengthLabel_ = nullptr;
@@ -84,4 +88,7 @@ private:
   qint64 lockedCust_ = 0;
   qint64 lockedProj_ = 0;
   bool commentEdit_ = false;
+  // True once the user edits the start field while tracking is inactive.
+  // Until then the field follows the clock and Start uses the current second.
+  bool startTimeEdited_ = false;
 };

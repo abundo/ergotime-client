@@ -28,8 +28,9 @@ struct ApplyResult {
   bool linked = false;
 };
 
-// SQLite store. Schema matches the Go client so both can share
-// ~/.ergotime2/ergotime.db. Each thread opens its own QSQLITE connection.
+// SQLite store. Schema matches the Go client so a release build can share
+// ~/.ergotime2/ergotime.db. Settings picks the path. Each thread opens its
+// own QSQLITE connection.
 class Store {
 public:
   explicit Store(const QString &path);

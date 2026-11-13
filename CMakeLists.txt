@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ergotime LANGUAGES CXX)
+project(ergotime VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,11 +24,30 @@ set(ERGOTIME_SOURCES
     src/sync.cpp
     src/dialogs.cpp
     src/mainwindow.cpp
+    src/version.cpp
 )
+
+set(ERGOTIME_VERSION_CPP "${CMAKE_BINARY_DIR}/generated/version.cpp")
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
+execute_process(
+    COMMAND "${CMAKE_SOURCE_DIR}/scripts/write-version-cpp.sh" "${ERGOTIME_VERSION_CPP}"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    RESULT_VARIABLE _ergotime_version_rc
+)
+if(NOT _ergotime_version_rc EQUAL 0)
+    message(FATAL_ERROR "scripts/write-version-cpp.sh failed")
+endif()
+add_custom_target(ergotime_version_gen
+    COMMAND "${CMAKE_SOURCE_DIR}/scripts/write-version-cpp.sh" "${ERGOTIME_VERSION_CPP}"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    VERBATIM)
+add_library(ergotime_version STATIC "${ERGOTIME_VERSION_CPP}")
+set_source_files_properties("${ERGOTIME_VERSION_CPP}" PROPERTIES GENERATED TRUE)
+add_dependencies(ergotime_version ergotime_version_gen)
 
 add_executable(ergotime ${ERGOTIME_SOURCES})
 target_include_directories(ergotime PRIVATE src)
-target_link_libraries(ergotime PRIVATE Qt6::Widgets Qt6::Sql Qt6::Network)
+target_link_libraries(ergotime PRIVATE ergotime_version Qt6::Widgets Qt6::Sql Qt6::Network)
 
 if(TARGET Qt6::DBus)
     target_link_libraries(ergotime PRIVATE Qt6::DBus)
