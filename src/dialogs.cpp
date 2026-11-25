@@ -547,8 +547,15 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
                    &dlg, [&](int) { reloadProjects(); });
   auto *dtStart = ui.startEdit;
   auto *dtStop = ui.stopEdit;
-  dtStart->setDateTime(r.start.toLocalTime());
-  dtStop->setDateTime((r.stop ? *r.stop : r.start.addSecs(1800)).toLocalTime());
+  {
+    Report shown = r;
+    if (!shown.stop) {
+      shown.stop = r.start.addSecs(30 * 60);
+    }
+    alignStoredReport(shown);
+    dtStart->setDateTime(shown.start.toLocalTime());
+    dtStop->setDateTime(shown.stop->toLocalTime());
+  }
   if (!isNew) {
     const auto tip = QStringLiteral(
         "Changing the date asks for confirmation when you save.");
@@ -561,11 +568,20 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
   QDate acceptedStop = dtStop->date();
   auto *len = ui.lengthLabel;
   auto updateLen = [&] {
-    if (dtStop->dateTime() < dtStart->dateTime()) {
-      dtStop->setDateTime(dtStart->dateTime());
+    Report shown;
+    shown.start = dtStart->dateTime();
+    shown.stop = dtStop->dateTime();
+    alignStoredReport(shown);
+    if (dtStart->dateTime() != shown.start) {
+      const QSignalBlocker block(dtStart);
+      dtStart->setDateTime(shown.start);
     }
-    len->setText(
-        formatDurationHms(dtStart->dateTime().msecsTo(dtStop->dateTime())));
+    if (shown.stop && dtStop->dateTime() != *shown.stop) {
+      const QSignalBlocker block(dtStop);
+      dtStop->setDateTime(*shown.stop);
+    }
+    len->setText(formatDurationHms(
+        shown.start.msecsTo(shown.stop.value_or(shown.start))));
   };
   QObject::connect(dtStart, &QDateTimeEdit::dateTimeChanged, &dlg, updateLen);
   QObject::connect(dtStop, &QDateTimeEdit::dateTimeChanged, &dlg, updateLen);
@@ -675,16 +691,21 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
         acceptedStop = dtStop->date();
       }
     }
-    QDateTime start = dtStart->dateTime();
-    QDateTime stop = dtStop->dateTime();
-    start.setTime(QTime(start.time().hour(), start.time().minute(),
-                        start.time().second()));
-    stop.setTime(
-        QTime(stop.time().hour(), stop.time().minute(), stop.time().second()));
-    if (stop < start) {
-      QMessageBox::warning(
-          &dlg, QStringLiteral("Save report"),
-          QStringLiteral("Stop time must be after start time."));
+    Report aligned;
+    aligned.start = dtStart->dateTime();
+    aligned.stop = dtStop->dateTime();
+    alignStoredReport(aligned);
+    const QDateTime start = aligned.start;
+    const QDateTime stop = aligned.stop.value_or(start);
+    if (dtStart->dateTime() != start) {
+      dtStart->setDateTime(start);
+    }
+    if (dtStop->dateTime() != stop) {
+      dtStop->setDateTime(stop);
+    }
+    if (start.secsTo(stop) < 60) {
+      QMessageBox::warning(&dlg, QStringLiteral("Save report"),
+                           QStringLiteral("Report must be at least 1 minute."));
       return;
     }
     if (start.secsTo(stop) >= 24 * 3600) {

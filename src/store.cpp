@@ -956,6 +956,10 @@ void Store::deleteReport(qint64 id) {
 
 void Store::saveReport(Report &r) {
   Conn c = connection();
+  // A delete keeps the stored instants. The server removes the row by id.
+  if (!r.deleted) {
+    alignStoredReport(r);
+  }
   if (r.id == 0) {
     if (!r.modified.isValid()) {
       r.modified = QDateTime::currentDateTimeUtc();

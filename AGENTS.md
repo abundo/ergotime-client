@@ -28,11 +28,13 @@ Each layer talks only to the one under it.
 
 ## Invariants
 
-- Sync speaks protocol 2 only. A server that does not advertise `protocol` 2 on
+- Sync speaks protocol 3 only. A server that does not advertise `protocol` 3 on
   `/healthz` is refused.
 - A report is one customer and one time interval. Project notes are lines on
   that interval. Several lines share the interval. Do not split the interval
   across projects.
+- Start and stop fall on a minute (seconds 0). A closed report is at least one
+  minute. Stop is that later minute, so 12:20 for one minute is 12:20:00–12:21:00.
 - Times on the wire are UTC RFC3339 with whole seconds.
 - A dirty local report wins a conflict. The row is flagged, not overwritten.
 - Catalog sync deletes customers and projects the server no longer returns.

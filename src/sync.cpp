@@ -21,8 +21,8 @@ namespace {
 // Spoken desktop sync contract. Widen the range when this client can
 // still talk to an older or newer server. Bump it only for a break:
 // a removed or redefined field, a new timestamp format, or a new auth scheme.
-constexpr int kMinSyncProtocol = 2;
-constexpr int kMaxSyncProtocol = 2;
+constexpr int kMinSyncProtocol = 3;
+constexpr int kMaxSyncProtocol = 3;
 
 QString syncProtocolRange() {
   if (kMinSyncProtocol == kMaxSyncProtocol) {
@@ -567,7 +567,17 @@ Engine::PushStats Engine::pushOps() {
       deletes.append(static_cast<double>(op.report.serverId));
       continue;
     }
-    const Report mapped = serverReport(op.report);
+    // Pending rows saved before this rule can still carry seconds. Align them
+    // before the push so the server accepts the batch, and keep the local row.
+    Report report = op.report;
+    alignStoredReport(report);
+    const bool sameStop =
+        (!report.stop && !op.report.stop) ||
+        (report.stop && op.report.stop && *report.stop == *op.report.stop);
+    if (report.start != op.report.start || !sameStop) {
+      store_.saveReport(report);
+    }
+    const Report mapped = serverReport(report);
     QJsonObject item;
     item.insert(QStringLiteral("project_id"),
                 static_cast<double>(mapped.projectId));

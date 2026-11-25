@@ -667,10 +667,9 @@ void MainWindow::beginTracking() {
   }
   confirmStartDateChange();
   const QDateTime now = wholeSecond(QDateTime::currentDateTime());
-  QDateTime start = now;
+  QDateTime start = floorMinute(now);
   if (startTimeEdited_) {
-    start = wholeSecond(startEdit_->dateTime());
-    start.setTime(QTime(start.time().hour(), start.time().minute(), 0));
+    start = floorMinute(startEdit_->dateTime());
   }
   if (!start.isValid() || start > now) {
     QMessageBox::warning(this, QStringLiteral("Start"),
@@ -754,8 +753,7 @@ void MainWindow::applyStartAdjustment() {
   if (!running) {
     return;
   }
-  QDateTime start = wholeSecond(startEdit_->dateTime());
-  start.setTime(QTime(start.time().hour(), start.time().minute(), 0));
+  QDateTime start = floorMinute(startEdit_->dateTime());
   const QDateTime current = running->start.toLocalTime();
   if (start.date() == current.date() &&
       start.time().hour() == current.time().hour() &&

@@ -61,9 +61,10 @@ void Tracker::start(const Report &draft, const QDateTime &startedAt) {
     return;
   }
   const QDateTime now = wholeSecond(QDateTime::currentDateTime());
-  QDateTime start = startedAt.isValid() ? wholeSecond(startedAt) : now;
+  QDateTime start =
+      startedAt.isValid() ? floorMinute(startedAt) : floorMinute(now);
   if (!start.isValid() || start > now) {
-    start = now;
+    start = floorMinute(now);
   }
   Report r = draft;
   r.id = 0;
@@ -97,7 +98,7 @@ void Tracker::setStart(const QDateTime &startedAt) {
     return;
   }
   const QDateTime now = wholeSecond(QDateTime::currentDateTime());
-  const QDateTime start = wholeSecond(startedAt);
+  const QDateTime start = floorMinute(startedAt);
   if (!start.isValid() || start > now) {
     return;
   }
@@ -119,10 +120,8 @@ void Tracker::stop() {
   QDateTime now = QDateTime::currentDateTime();
   now.setTime(
       QTime(now.time().hour(), now.time().minute(), now.time().second()));
-  if (now < report_->start) {
-    now = report_->start;
-  }
   report_->stop = now;
+  alignStoredReport(*report_);
   report_->modified = now;
   try {
     store_.saveReport(*report_);
@@ -145,12 +144,9 @@ void Tracker::tick() {
   report_->stop = now;
   const qint64 idleFor = idle_ ? idle_->idleMs() : 0;
   if (idleFor > idleTimeoutMs_) {
-    QDateTime stop = now.addMSecs(-idleTimeoutMs_);
-    if (stop < report_->start) {
-      stop = report_->start;
-    }
     timer_.stop();
-    report_->stop = stop;
+    report_->stop = now.addMSecs(-idleTimeoutMs_);
+    alignStoredReport(*report_);
     report_->modified = now;
     try {
       store_.saveReport(*report_);

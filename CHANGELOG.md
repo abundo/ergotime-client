@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Fixed
 
+- Creating, editing, or stopping a report stores the start and stop on a minute boundary. The shortest report is one minute. A report that starts at 12:20 ends at 12:21:00. A shorter entry is stored as that one minute.
 - Editing a report and choosing another customer keeps the comments. A comment stays on a project with the same name. Any other comment moves to that customer's default project.
 - Creating a report starts on the customer and project selected in the main window. A report whose stored customer does not own its projects opens on the customer that does, so the comments are shown.
 - A batch create is marked synced only when its client_uuid matches. An empty id no longer claims another report's server row.
@@ -19,7 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - Creating or editing a report refuses a length of 24 hours or more. The start and stop stay as entered, and Save explains why it did not store the report.
 - Changing the date on Started, or the start or stop date while editing a report, asks whether that was intended. The time can still be changed directly. Creating a report still edits the date without asking.
 - A report is a customer and a time range. The comment area is a table of that customer's projects. The default project is preselected. Comments on several projects share the one interval. Comments on a single project keep the whole interval on that project.
-- Sync protocol is 2. Protocol 1 servers are refused, because a report can now carry several project comments.
+- Sync protocol is 3. Protocol 2 servers are refused. A report's start and stop are whole minutes, and a closed report is at least one minute.
 
 ### Added
 
@@ -30,7 +31,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - The time-tracking panel has a Started date and time. It follows the clock until edited. Start uses that time, and the field stays editable while the entry is running. A time in the future is refused.
 - A divider between the customer side and the comment can be dragged. Its position is saved when the program exits.
 - Static release binaries are stripped and packed with UPX, so the download stays an executable. Linux, Windows, and macOS builds all go through `scripts/pack-upx.sh`.
-- Sync refuses to pull or push unless `/healthz` advertises sync protocol 2. A missing number or any other number stops the sync before catalog or report changes, with a message naming the protocol this client speaks.
+- Sync refuses to pull or push unless `/healthz` advertises sync protocol 3. A missing number or any other number stops the sync before catalog or report changes, with a message naming the protocol this client speaks.
 - Linux idle detection through Wayland `ext-idle-notifier-v1` (KWin, Sway, Hyprland, niri, labwc, river). The client tries this before GNOME Mutter `IdleMonitor` and `org.freedesktop.ScreenSaver`. Version 2 of the protocol uses input idle, so a video idle inhibitor does not keep a running report open.
 
 ## [1.0.0] - 2026-11-09

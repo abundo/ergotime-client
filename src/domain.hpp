@@ -82,6 +82,34 @@ struct Status {
   std::optional<Report> report;
 };
 
+// Drop seconds. The minute itself is unchanged in whatever zone t already uses.
+// Offsets in real use are a whole number of minutes, so this is the same
+// instant as zeroing the UTC second.
+inline QDateTime floorMinute(QDateTime t) {
+  if (!t.isValid()) {
+    return {};
+  }
+  const QTime time = t.time();
+  t.setTime(QTime(time.hour(), time.minute(), 0, 0));
+  return t;
+}
+
+// A closed report starts and stops with seconds at 0. Stop is the first minute
+// at or after the entered end, and at least one minute after start.
+// 12:20 for one minute is 12:20:00–12:21:00, not 12:20:59.
+inline void alignStoredReport(Report &r) {
+  r.start = floorMinute(r.start);
+  if (!r.stop || !r.start.isValid()) {
+    return;
+  }
+  QDateTime stop = floorMinute(*r.stop);
+  const QDateTime minStop = r.start.addSecs(60);
+  if (stop < minStop) {
+    stop = minStop;
+  }
+  r.stop = stop;
+}
+
 // Match the Go client's store.FormatTime: UTC RFC3339 with whole seconds.
 inline QString formatTime(const QDateTime &t) {
   if (!t.isValid()) {
