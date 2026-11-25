@@ -1003,10 +1003,19 @@ void Store::saveReport(Report &r) {
   r.conflict = false;
   r.comment = sqlText(r.comment);
   QSqlQuery q(c.db);
+  // A running report is saved again while sync may have just stored a server
+  // id on this row. An empty identity must not wipe that link.
   q.prepare(QStringLiteral(
-      "UPDATE report SET user_id=?, project_id=?, start=?, stop=?, comment=?, "
-      "modified=?, seq=?, deleted=?, server_id=?, updated=?, "
-      "client_uuid=?, conflict=?, customer_id=? WHERE _id=?"));
+      "UPDATE report SET "
+      "user_id=CASE WHEN ? > 0 THEN ? ELSE user_id END, "
+      "project_id=?, start=?, stop=?, comment=?, modified=?, "
+      "seq=CASE WHEN ? > 0 THEN ? ELSE seq END, "
+      "deleted=?, "
+      "server_id=CASE WHEN ? > 0 THEN ? ELSE server_id END, "
+      "updated=?, "
+      "client_uuid=CASE WHEN ? != '' THEN ? ELSE client_uuid END, "
+      "conflict=?, customer_id=? WHERE _id=?"));
+  q.addBindValue(r.userId);
   q.addBindValue(r.userId);
   q.addBindValue(r.projectId);
   q.addBindValue(formatTime(r.start));
@@ -1014,15 +1023,34 @@ void Store::saveReport(Report &r) {
   q.addBindValue(r.comment);
   q.addBindValue(formatTime(r.modified));
   q.addBindValue(r.seq);
+  q.addBindValue(r.seq);
   q.addBindValue(b(r.deleted));
   q.addBindValue(r.serverId);
+  q.addBindValue(r.serverId);
   q.addBindValue(b(r.updated));
+  q.addBindValue(r.clientUuid);
   q.addBindValue(r.clientUuid);
   q.addBindValue(b(r.conflict));
   q.addBindValue(r.customerId);
   q.addBindValue(r.id);
   if (!q.exec()) {
     fail(q, QStringLiteral("update report"));
+  }
+  QSqlQuery back(c.db);
+  back.prepare(QStringLiteral(
+      "SELECT server_id, seq, user_id, client_uuid FROM report WHERE _id=?"));
+  back.addBindValue(r.id);
+  if (!back.exec()) {
+    fail(back, QStringLiteral("read report identity"));
+  }
+  if (back.next()) {
+    r.serverId = back.value(0).toLongLong();
+    r.seq = back.value(1).toLongLong();
+    r.userId = back.value(2).toLongLong();
+    const QString uuid = back.value(3).toString();
+    if (!uuid.isEmpty()) {
+      r.clientUuid = uuid;
+    }
   }
   writeLines(c.db, r);
 }
@@ -1148,7 +1176,8 @@ void Store::hardDeleteReport(qint64 id) {
 }
 
 void Store::markReportSynced(qint64 localId, qint64 serverId, qint64 seq,
-                             qint64 userId, const QDateTime &modified) {
+                             qint64 userId, const QDateTime &modified,
+                             const QDateTime &pushedModified) {
   if (localId == 0) {
     throw std::runtime_error("local id required");
   }
@@ -1156,14 +1185,33 @@ void Store::markReportSynced(qint64 localId, qint64 serverId, qint64 seq,
       modified.isValid() ? modified : QDateTime::currentDateTimeUtc();
   Conn c = connection();
   QSqlQuery q(c.db);
-  q.prepare(QStringLiteral(
-      "UPDATE report SET server_id=?, seq=?, user_id=?, modified=?, updated=0, "
-      "deleted=0, conflict=0 WHERE _id=?"));
-  q.addBindValue(serverId);
-  q.addBindValue(seq);
-  q.addBindValue(userId);
-  q.addBindValue(formatTime(mod));
-  q.addBindValue(localId);
+  if (!pushedModified.isValid()) {
+    q.prepare(QStringLiteral(
+        "UPDATE report SET server_id=?, seq=?, user_id=?, modified=?, "
+        "updated=0, deleted=0, conflict=0 WHERE _id=?"));
+    q.addBindValue(serverId);
+    q.addBindValue(seq);
+    q.addBindValue(userId);
+    q.addBindValue(formatTime(mod));
+    q.addBindValue(localId);
+  } else {
+    const QString pushed = formatTime(pushedModified);
+    q.prepare(QStringLiteral(
+        "UPDATE report SET server_id=?, seq=?, user_id=?, "
+        "modified=CASE WHEN modified=? THEN ? ELSE modified END, "
+        "updated=CASE WHEN modified=? THEN 0 ELSE updated END, "
+        "deleted=0, "
+        "conflict=CASE WHEN modified=? THEN 0 ELSE conflict END "
+        "WHERE _id=?"));
+    q.addBindValue(serverId);
+    q.addBindValue(seq);
+    q.addBindValue(userId);
+    q.addBindValue(pushed);
+    q.addBindValue(formatTime(mod));
+    q.addBindValue(pushed);
+    q.addBindValue(pushed);
+    q.addBindValue(localId);
+  }
   if (!q.exec()) {
     fail(q, QStringLiteral("mark synced"));
   }

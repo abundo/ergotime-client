@@ -36,12 +36,20 @@ signals:
 private:
   void tick();
   void setState(TrackerState s);
+  // Write the running report. A closing write (Stop or idle) flushes
+  // immediately. Otherwise the row is written when the current minute has
+  // closed, then again each time that minute moves. The first write inserts.
+  // Later writes update the same row.
+  void persist(bool closing);
 
   Store &store_;
   std::unique_ptr<Idle> idle_;
   QTimer timer_;
   TrackerState state_ = TrackerState::Inactive;
   std::optional<Report> report_;
+  // Last row written for this run. Used to skip a minute that is already on
+  // disk, and to flush a comment typed after that write when tracking ends.
+  std::optional<Report> saved_;
   std::optional<Project> project_;
   int idleTimeoutMs_;
 };

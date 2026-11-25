@@ -193,7 +193,11 @@ MainWindow::MainWindow(Settings &settings, Store &store, Engine &engine,
           [this](const QString &msg) { qWarning() << msg; });
   connect(&engine_, &Engine::finished, this, [this](const SyncResult &) {
     refreshSyncStatus();
-    refreshCatalog();
+    // A running report is saved every minute and may sync then. Rebuilding
+    // the customer list and comment table would drop the comment being typed.
+    if (!listsLocked_) {
+      refreshCatalog();
+    }
     refreshReports();
   });
 
@@ -798,7 +802,8 @@ void MainWindow::setTrackerState(TrackerState state) {
     }
     lengthLabel_->setText(QStringLiteral("Duration: —"));
     idleLabel_->setText(QStringLiteral("Idle: —"));
-    fillCommentTable(selectedId(customers_), 0);
+    // Catalog refreshes were held while this report was running.
+    refreshCatalog();
   }
   const QIcon icon = stateIcon(state);
   setWindowIcon(icon);

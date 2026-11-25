@@ -562,6 +562,9 @@ Engine::PushStats Engine::pushOps() {
     return stats;
   }
   QJsonArray deletes, creates, updates;
+  // Local modified time actually pushed, after a possible align write.
+  // Marking synced must not clear a row saved again while the push was out.
+  std::vector<std::pair<qint64, QDateTime>> pushedModified;
   for (const PendingOp &op : ops) {
     if (op.kind == OpKind::Delete) {
       deletes.append(static_cast<double>(op.report.serverId));
@@ -577,6 +580,7 @@ Engine::PushStats Engine::pushOps() {
     if (report.start != op.report.start || !sameStop) {
       store_.saveReport(report);
     }
+    pushedModified.emplace_back(report.id, report.modified);
     const Report mapped = serverReport(report);
     QJsonObject item;
     item.insert(QStringLiteral("project_id"),
@@ -630,7 +634,7 @@ Engine::PushStats Engine::pushOps() {
       } else if (op.kind == OpKind::Create) {
         const auto out = api.createReport(serverReport(op.report));
         store_.markReportSynced(op.report.id, out.id, out.seq, out.userId,
-                                out.modified);
+                                out.modified, op.report.modified);
         stats.creates++;
       } else {
         const auto out =
@@ -641,12 +645,20 @@ Engine::PushStats Engine::pushOps() {
                                   ? out.modified
                                   : QDateTime::currentDateTimeUtc();
         store_.markReportSynced(op.report.id, op.report.serverId, seq, user,
-                                mod);
+                                mod, op.report.modified);
         stats.updates++;
       }
     }
     return stats;
   }
+  const auto pushedAt = [&pushedModified](qint64 localId) {
+    for (const auto &row : pushedModified) {
+      if (row.first == localId) {
+        return row.second;
+      }
+    }
+    return QDateTime();
+  };
   const QJsonObject root = batch.object();
   for (const auto &v : root.value(QStringLiteral("deleted")).toArray()) {
     const qint64 sid = static_cast<qint64>(
@@ -675,7 +687,8 @@ Engine::PushStats Engine::pushOps() {
             static_cast<qint64>(o.value(QStringLiteral("id")).toDouble()),
             static_cast<qint64>(o.value(QStringLiteral("seq")).toDouble()),
             static_cast<qint64>(o.value(QStringLiteral("user_id")).toDouble()),
-            parseTime(o.value(QStringLiteral("modified")).toString()));
+            parseTime(o.value(QStringLiteral("modified")).toString()),
+            pushedAt(op.report.id));
         stats.creates++;
       }
     }
@@ -690,7 +703,8 @@ Engine::PushStats Engine::pushOps() {
             op.report.id, sid,
             static_cast<qint64>(o.value(QStringLiteral("seq")).toDouble()),
             static_cast<qint64>(o.value(QStringLiteral("user_id")).toDouble()),
-            parseTime(o.value(QStringLiteral("modified")).toString()));
+            parseTime(o.value(QStringLiteral("modified")).toString()),
+            pushedAt(op.report.id));
         stats.updates++;
       }
     }

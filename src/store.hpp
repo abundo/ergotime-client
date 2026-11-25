@@ -65,8 +65,12 @@ public:
   std::optional<Report> getReportByServerId(qint64 serverId);
   std::optional<Report> getReportByClientUuid(const QString &uuid);
   void hardDeleteReport(qint64 id);
+  // pushedModified is the local modified time that was sent. When the row
+  // has been saved again since that read, the server id is still stored and
+  // the row stays dirty so the newer copy is pushed later.
   void markReportSynced(qint64 localId, qint64 serverId, qint64 seq,
-                        qint64 userId, const QDateTime &modified);
+                        qint64 userId, const QDateTime &modified,
+                        const QDateTime &pushedModified);
   ApplyResult applyServerReport(const Report &r);
 
   qint64 lastSeq();
