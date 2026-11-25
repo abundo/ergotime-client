@@ -25,6 +25,10 @@ case "$desc" in
     ;;
   *"Mach-O"*)
     strip "$bin"
+    # UPX 4 and 5 refuse Mach-O unless --force-macos is passed, and a
+    # forced pack does not run under current macOS. Ship the stripped binary.
+    echo "pack-upx: leaving Mach-O unpacked; UPX does not support this binary"
+    exit 0
     ;;
   *)
     strip --strip-unneeded "$bin"

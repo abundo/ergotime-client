@@ -75,6 +75,7 @@ build/ergotime-static: $(SRC) build/static_plugins.cpp $(VERSION_CPP) $(UI_HEADE
 	$(STATIC_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_STATIC_PREFIX)) src/mainwindow.hpp -o build/moc_mainwindow.cpp
 	$(STATIC_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_STATIC_PREFIX)) src/tracker.hpp -o build/moc_tracker.cpp
 	$(STATIC_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_STATIC_PREFIX)) src/sync.hpp -o build/moc_engine.cpp
+	@python3 scripts/qt-static.py ldflags $(QT_STATIC_PREFIX) >/dev/null
 	$(CXX) $(shell python3 scripts/qt-static.py cflags $(QT_STATIC_PREFIX)) -Isrc -Ibuild -o $@ \
 		$(SRC) $(MOC_SRC) $(VERSION_CPP) build/static_plugins.cpp \
 		$(shell python3 scripts/qt-static.py ldflags $(QT_STATIC_PREFIX)) \
@@ -89,6 +90,7 @@ build/ergotime.exe: $(SRC) build/windows_plugins.cpp $(VERSION_CPP) $(UI_HEADERS
 	$(WIN_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_WINDOWS_PREFIX)) src/mainwindow.hpp -o build/moc_mainwindow.cpp
 	$(WIN_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_WINDOWS_PREFIX)) src/tracker.hpp -o build/moc_tracker.cpp
 	$(WIN_MOC) $(shell python3 scripts/qt-static.py mocflags $(QT_WINDOWS_PREFIX)) src/sync.hpp -o build/moc_engine.cpp
+	@NM=$(MINGW_NM) python3 scripts/qt-static.py ldflags $(QT_WINDOWS_PREFIX) >/dev/null
 	$(MINGW_CXX) $(shell python3 scripts/qt-static.py cflags $(QT_WINDOWS_PREFIX)) -Isrc -Ibuild -o $@ \
 		$(SRC) $(MOC_SRC) $(VERSION_CPP) build/windows_plugins.cpp \
 		$(shell NM=$(MINGW_NM) python3 scripts/qt-static.py ldflags $(QT_WINDOWS_PREFIX)) \

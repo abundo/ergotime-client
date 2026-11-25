@@ -98,6 +98,24 @@ def prl_libs(path: Path, variables: dict[str, str]) -> list[str]:
     return [expand(tok, variables) for tok in libs.split() if tok]
 
 
+def companion_prl(archive: Path) -> Path | None:
+    """Return the .prl that describes this static archive.
+
+    Linux installs libqoffscreen.prl beside libqoffscreen.a. The MinGW
+    install keeps the lib prefix on the archive and drops it on the
+    metadata, so the same plugin is qoffscreen.prl. Module archives do
+    the same: libQt6Core.a is described by Qt6Core.prl.
+    """
+    candidates = [archive.with_suffix(".prl")]
+    name = archive.name
+    if name.startswith("lib") and name.endswith(".a"):
+        candidates.append(archive.with_name(name[len("lib") : -len(".a")] + ".prl"))
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
 def style_archives(prefix: Path) -> list[Path]:
     styles = prefix / "plugins" / "styles"
     if not styles.is_dir():
@@ -140,15 +158,16 @@ def collect(prefix: Path) -> list[str]:
     variables = prefix_vars(prefix)
     seeds: list[Path] = []
     for name in MODULES:
-        prl = prefix / "lib" / f"lib{name}.prl"
-        if prl.is_file():
-            seeds.append(prl)
+        for filename in (f"lib{name}.prl", f"{name}.prl"):
+            prl = prefix / "lib" / filename
+            if prl.is_file():
+                seeds.append(prl)
+                break
     for archive in selected_archives(prefix):
-        prl = archive.with_suffix(".prl")
-        if prl.is_file():
-            seeds.append(prl)
-        else:
-            die(f"missing {prl}")
+        prl = companion_prl(archive)
+        if prl is None:
+            die(f"missing {archive.with_suffix('.prl')}")
+        seeds.append(prl)
 
     seen_prl: set[Path] = set()
     tokens: list[str] = []
@@ -161,8 +180,8 @@ def collect(prefix: Path) -> list[str]:
         for tok in prl_libs(prl, variables):
             tokens.append(tok)
             if tok.endswith(".a"):
-                child = Path(tok).with_suffix(".prl")
-                if child.is_file():
+                child = companion_prl(Path(tok))
+                if child is not None:
                     queue.append(child)
 
     deduped: list[str] = []
@@ -183,10 +202,18 @@ def mocflags(prefix: Path) -> list[str]:
 
 def cflags(prefix: Path) -> list[str]:
     inc = prefix / "include"
-    specs = prefix / "mkspecs" / "linux-g++"
-    if not specs.is_dir():
-        win = prefix / "mkspecs" / "win32-g++"
-        specs = win if win.is_dir() else prefix / "mkspecs"
+    win = prefix / "mkspecs" / "win32-g++"
+    linux = prefix / "mkspecs" / "linux-g++"
+    # A MinGW prefix ships every mkspec, including linux-g++. The Windows
+    # platform plugin is what says this prefix is the Windows one.
+    if (prefix / "plugins/platforms/libqwindows.a").is_file() and win.is_dir():
+        specs = win
+    elif linux.is_dir():
+        specs = linux
+    elif win.is_dir():
+        specs = win
+    else:
+        specs = prefix / "mkspecs"
     flags = [
         "-std=c++17",
         "-Wall",

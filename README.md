@@ -48,7 +48,7 @@ make static              # rebuild the binary once the static Qt exists
 
 `ldd build/ergotime-static` should list system libraries only. The static Qt build includes the Wayland platform plugin as well as XCB, so a Wayland session does not have to fall back to XWayland.
 
-`make static` and `make static-windows` strip the binary and pack it with UPX (`scripts/pack-upx.sh`). The file stays an executable. The macOS CMake build does the same. UPX has to be installed (`upx` on Fedora, `brew install upx` on macOS).
+`make static` and `make static-windows` strip the binary and pack it with UPX (`scripts/pack-upx.sh`). The file stays an executable. The macOS CMake build strips the binary and leaves it unpacked, because current UPX refuses Mach-O. UPX has to be installed for the Linux and Windows packs (`upx` on Fedora).
 
 ## Windows cross-compile
 
