@@ -5,16 +5,19 @@
 #include "version.hpp"
 
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDateTimeEdit>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QEvent>
+#include <QFocusEvent>
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -152,20 +155,9 @@ struct NotedComment {
   QString comment;
 };
 
-// The comment cell keeps its text in the editor until focus leaves. Write
-// that text back before the table is rebuilt or saved.
+// The comment cell keeps its text in the editor until the view commits it.
 void commitCommentEditor(QTableWidget *table) {
-  bool open = false;
-  const auto edits = table->findChildren<QPlainTextEdit *>();
-  for (QPlainTextEdit *edit : edits) {
-    if (edit->isVisible()) {
-      open = true;
-      break;
-    }
-  }
-  if (open) {
-    table->setFocus(Qt::OtherFocusReason);
-  }
+  commitOpenCommentEditor(table);
 }
 
 std::vector<NotedComment> notesFromCommentTable(QTableWidget *table) {
@@ -352,6 +344,10 @@ qint64 customerForReport(Store &store, const Report &r, bool isNew) {
 
 void fillCommentTable(QTableWidget *table, Store &store, qint64 customerId,
                       const Report &r, qint64 anchorId) {
+  // Drop the editor before the rows. Removing the row first leaves the
+  // editor registered against an index that no longer exists, and Qt warns
+  // that commitData was called for an editor that does not belong to the view.
+  commitOpenCommentEditor(table);
   table->setRowCount(0);
   if (customerId <= 0) {
     return;
@@ -398,6 +394,33 @@ void fillCommentTable(QTableWidget *table, Store &store, qint64 customerId,
 }
 
 } // namespace
+
+void commitOpenCommentEditor(QTableWidget *table) {
+  if (table == nullptr) {
+    return;
+  }
+  QPointer<QPlainTextEdit> open;
+  const auto edits = table->findChildren<QPlainTextEdit *>();
+  for (QPlainTextEdit *edit : edits) {
+    if (edit->isVisible()) {
+      open = edit;
+      break;
+    }
+  }
+  if (open == nullptr) {
+    return;
+  }
+  // Focus lives on the viewport, so the delegate's filter (installed on the
+  // QPlainTextEdit) never sees the FocusOut from setFocus. Deliver it after
+  // focus has left the editor. The view commits while the editor is still
+  // registered, and the current cell stays put.
+  table->setFocus(Qt::OtherFocusReason);
+  if (open == nullptr) {
+    return;
+  }
+  QFocusEvent out(QEvent::FocusOut, Qt::OtherFocusReason);
+  QCoreApplication::sendEvent(open, &out);
+}
 
 void configureProjectCommentTable(QTableWidget *table) {
   table->setItemDelegateForColumn(1, new MultilineCommentDelegate(table));

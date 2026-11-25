@@ -47,7 +47,11 @@ protected:
 private:
   void buildUi();
   void refreshCatalog();
-  void fillCommentTable(qint64 customerId, qint64 anchorId);
+  // commentsFrom supplies the cell text. Otherwise a running report keeps
+  // the text already on screen.
+  void fillCommentTable(qint64 customerId, qint64 anchorId,
+                        const Report *commentsFrom = nullptr);
+  void applyEditedRunningReport(const Report &saved);
   void pushDraft();
   void beginTracking();
   void applyStartAdjustment();

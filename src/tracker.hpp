@@ -26,6 +26,9 @@ public:
   void setStart(const QDateTime &startedAt);
   const Report *report() const { return report_ ? &*report_ : nullptr; }
   void stop();
+  // Drop the running report without writing it. Used when that row was
+  // deleted from the edit dialog, so the next minute does not insert it again.
+  void abandon();
 
 signals:
   void stateChanged(TrackerState state);

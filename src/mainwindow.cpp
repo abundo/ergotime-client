@@ -194,7 +194,8 @@ MainWindow::MainWindow(Settings &settings, Store &store, Engine &engine,
   connect(&engine_, &Engine::finished, this, [this](const SyncResult &) {
     refreshSyncStatus();
     // A running report is saved every minute and may sync then. Rebuilding
-    // the customer list and comment table would drop the comment being typed.
+    // the customer list and comment table would drop the comment being typed
+    // and make Qt commit an editor whose row is already gone.
     if (!listsLocked_) {
       refreshCatalog();
     }
@@ -395,7 +396,11 @@ void MainWindow::buildUi() {
     startDateBaseline_ = startEdit_->date();
   });
   startClock->start();
-  connect(stopBtn_, &QPushButton::clicked, &tracker_, &Tracker::stop);
+  connect(stopBtn_, &QPushButton::clicked, this, [this] {
+    commitOpenCommentEditor(comment_);
+    pushDraft();
+    tracker_.stop();
+  });
   connect(form.syncCatalogButton, &QPushButton::clicked, this,
           &MainWindow::syncCatalogNow);
   connect(form.syncReportsButton, &QPushButton::clicked, this,
@@ -461,6 +466,15 @@ void MainWindow::buildUi() {
         return;
       }
       if (showReportDialog(this, store_, &*report, selectedDay())) {
+        if (const Report *running = tracker_.report();
+            running && running->id == id) {
+          auto saved = store_.getReport(id);
+          if (!saved || saved->deleted) {
+            tracker_.abandon();
+          } else {
+            applyEditedRunningReport(*saved);
+          }
+        }
         refreshReports();
         if (settings_.get().autoSync) {
           syncNow();
@@ -581,7 +595,12 @@ void MainWindow::syncNow() {
         this,
         [this] {
           refreshSyncStatus();
-          refreshCatalog();
+          // Same guard as Engine::finished. Rebuilding here while a comment
+          // cell is open removes the editor's row, then Qt warns that
+          // commitData ran for an editor that does not belong to the view.
+          if (!listsLocked_) {
+            refreshCatalog();
+          }
           refreshReports();
         },
         Qt::QueuedConnection);
@@ -599,7 +618,9 @@ void MainWindow::syncCatalogNow() {
         this,
         [this] {
           refreshSyncStatus();
-          refreshCatalog();
+          if (!listsLocked_) {
+            refreshCatalog();
+          }
         },
         Qt::QueuedConnection);
   });
@@ -629,6 +650,7 @@ void MainWindow::startProject(qint64 id) {
 }
 
 void MainWindow::beginTracking() {
+  commitOpenCommentEditor(comment_);
   const qint64 custId = selectedId(customers_);
   std::vector<Project> projects;
   try {
@@ -886,10 +908,40 @@ void MainWindow::refreshCatalog() {
   rebuildTray();
 }
 
-void MainWindow::fillCommentTable(qint64 customerId, qint64 anchorId) {
+void MainWindow::applyEditedRunningReport(const Report &saved) {
+  tracker_.setDraft(saved);
+  tracker_.setStart(saved.start);
+  if (const Report *running = tracker_.report()) {
+    const QSignalBlocker block(startEdit_);
+    startEdit_->setDateTime(running->start.toLocalTime());
+    startDateBaseline_ = startEdit_->date();
+  }
+  lockedCust_ = saved.customerId;
+  lockedProj_ = saved.projectId;
+  customers_->blockSignals(true);
+  for (int i = 0; i < customers_->count(); ++i) {
+    if (itemId(customers_->item(i)) == saved.customerId) {
+      customers_->setCurrentRow(i);
+      break;
+    }
+  }
+  customers_->blockSignals(false);
+  fillCommentTable(saved.customerId, saved.projectId, &saved);
+}
+
+void MainWindow::fillCommentTable(qint64 customerId, qint64 anchorId,
+                                  const Report *commentsFrom) {
   commentEdit_ = true;
+  commitOpenCommentEditor(comment_);
   QHash<qint64, QString> previous;
-  if (listsLocked_) {
+  if (commentsFrom != nullptr) {
+    for (const ReportLine &ln : commentsFrom->lines) {
+      previous.insert(ln.projectId, ln.comment);
+    }
+    if (commentsFrom->lines.empty() && commentsFrom->projectId > 0) {
+      previous.insert(commentsFrom->projectId, commentsFrom->comment);
+    }
+  } else if (listsLocked_) {
     for (int i = 0; i < comment_->rowCount(); ++i) {
       const auto *name = comment_->item(i, 0);
       const auto *text = comment_->item(i, 1);

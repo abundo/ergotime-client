@@ -19,3 +19,7 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
 
 // Project column stays one line. The comment column edits as several lines.
 void configureProjectCommentTable(QTableWidget *table);
+
+// Write an open comment editor back onto its cell. QPlainTextEdit keeps
+// focus on its viewport, so moving focus to the table does not commit.
+void commitOpenCommentEditor(QTableWidget *table);

@@ -126,6 +126,16 @@ void Tracker::setStart(const QDateTime &startedAt) {
   emit statusChanged(st);
 }
 
+void Tracker::abandon() {
+  timer_.stop();
+  report_.reset();
+  saved_.reset();
+  project_.reset();
+  if (state_ != TrackerState::Inactive) {
+    setState(TrackerState::Inactive);
+  }
+}
+
 void Tracker::stop() {
   if (state_ != TrackerState::Active || !report_) {
     timer_.stop();

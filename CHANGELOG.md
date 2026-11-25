@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Fixed
 
+- Sync while a report is running no longer rebuilds the comment table under an open editor. That rebuild logged `QAbstractItemView::commitData called with an editor that does not belong to this view`.
+- Editing the running report keeps the saved customer, comments, and start on the timer. Deleting that report stops the timer instead of writing the row again on the next minute.
 - Creating, editing, or stopping a report stores the start and stop on a minute boundary. The shortest report is one minute. A report that starts at 12:20 ends at 12:21:00. A shorter entry is stored as that one minute.
 - Editing a report and choosing another customer keeps the comments. A comment stays on a project with the same name. Any other comment moves to that customer's default project.
 - Creating a report starts on the customer and project selected in the main window. A report whose stored customer does not own its projects opens on the customer that does, so the comments are shown.
