@@ -84,7 +84,7 @@ private:
   QTableWidget *table_ = nullptr;
   QTableWidget *logTable_ = nullptr;
   QCheckBox *logAutoscroll_ = nullptr;
-  QCheckBox *logClear_ = nullptr;
+  QPushButton *logClear_ = nullptr;
   QCheckBox *autoSync_ = nullptr;
   QDateEdit *dateEdit_ = nullptr;
   QLabel *weekday_ = nullptr;

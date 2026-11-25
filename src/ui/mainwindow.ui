@@ -435,7 +435,7 @@
            </widget>
           </item>
           <item>
-           <widget class="QCheckBox" name="logClear">
+           <widget class="QPushButton" name="logClear">
             <property name="toolTip">
              <string>Remove every line from the log</string>
             </property>

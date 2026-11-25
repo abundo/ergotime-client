@@ -306,15 +306,8 @@ void MainWindow::buildUi() {
   auto *copyLog = new QShortcut(QKeySequence::Copy, logTable_);
   copyLog->setContext(Qt::WidgetWithChildrenShortcut);
   connect(copyLog, &QShortcut::activated, this, &MainWindow::copyLogSelection);
-  connect(logClear_, &QCheckBox::clicked, this, [this](bool checked) {
-    if (!checked) {
-      return;
-    }
-    logTable_->setRowCount(0);
-    // Uncheck after this click finishes, so the box does not stay on.
-    QTimer::singleShot(0, logClear_,
-                       [this]() { logClear_->setChecked(false); });
-  });
+  connect(logClear_, &QPushButton::clicked, this,
+          [this] { logTable_->setRowCount(0); });
   LogSink::instance()->setConsumer(
       [this](const QString &time, const QString &level, const QString &text) {
         appendLogLine(time, level, text);
