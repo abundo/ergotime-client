@@ -430,7 +430,19 @@ void MainWindow::buildUi() {
     refreshReports();
   });
   connect(form.createButton, &QPushButton::clicked, this, [this] {
-    if (showReportDialog(this, store_, nullptr, selectedDay())) {
+    // Start from the customer on screen. The combo's first row is whichever
+    // name sorts first, which is often a different customer.
+    Report hint;
+    if (tracker_.state() == TrackerState::Active && lockedCust_ > 0) {
+      hint.customerId = lockedCust_;
+    } else {
+      hint.customerId = selectedId(customers_);
+    }
+    const int row = comment_->currentRow();
+    if (row >= 0 && comment_->item(row, 0)) {
+      hint.projectId = comment_->item(row, 0)->data(Qt::UserRole).toLongLong();
+    }
+    if (showReportDialog(this, store_, &hint, selectedDay())) {
       refreshReports();
       if (settings_.get().autoSync) {
         syncNow();

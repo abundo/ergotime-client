@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Fixed
 
+- Editing a report and choosing another customer keeps the comments. A comment stays on a project with the same name. Any other comment moves to that customer's default project.
+- Creating a report starts on the customer and project selected in the main window. A report whose stored customer does not own its projects opens on the customer that does, so the comments are shown.
 - A batch create is marked synced only when its client_uuid matches. An empty id no longer claims another report's server row.
 - A date stored without a timezone is read as UTC, the same as values written with a Z suffix.
 - Catalog sync removes customers and projects the server no longer returns. A report line on a removed project keeps its text on a project that remains, so the time entry can still be pushed.

@@ -133,6 +133,223 @@ QString lineComment(const Report &r, qint64 projectId) {
   return {};
 }
 
+QString stripDefaultSuffix(QString name) {
+  name = name.trimmed();
+  const QString suffix = QStringLiteral(" (default)");
+  if (name.endsWith(suffix)) {
+    name.chop(suffix.size());
+  }
+  return name.trimmed();
+}
+
+QString projectMatchKey(const QString &name) {
+  return stripDefaultSuffix(name).toCaseFolded();
+}
+
+struct NotedComment {
+  qint64 projectId = 0;
+  QString name;
+  QString comment;
+};
+
+// The comment cell keeps its text in the editor until focus leaves. Write
+// that text back before the table is rebuilt or saved.
+void commitCommentEditor(QTableWidget *table) {
+  bool open = false;
+  const auto edits = table->findChildren<QPlainTextEdit *>();
+  for (QPlainTextEdit *edit : edits) {
+    if (edit->isVisible()) {
+      open = true;
+      break;
+    }
+  }
+  if (open) {
+    table->setFocus(Qt::OtherFocusReason);
+  }
+}
+
+std::vector<NotedComment> notesFromCommentTable(QTableWidget *table) {
+  commitCommentEditor(table);
+  QPlainTextEdit *open = nullptr;
+  const auto edits = table->findChildren<QPlainTextEdit *>();
+  for (QPlainTextEdit *edit : edits) {
+    if (edit->isVisible()) {
+      open = edit;
+      break;
+    }
+  }
+  const int editingRow = open != nullptr ? table->currentRow() : -1;
+  std::vector<NotedComment> notes;
+  for (int i = 0; i < table->rowCount(); ++i) {
+    const auto *name = table->item(i, 0);
+    const auto *text = table->item(i, 1);
+    if (!name) {
+      continue;
+    }
+    NotedComment note;
+    note.projectId = name->data(Qt::UserRole).toLongLong();
+    note.name = name->text();
+    if (open != nullptr && i == editingRow) {
+      note.comment = open->toPlainText();
+    } else {
+      note.comment = text ? text->text() : QString();
+    }
+    notes.push_back(note);
+  }
+  return notes;
+}
+
+void appendCommentBlock(QString &dst, const QString &text) {
+  if (text.trimmed().isEmpty()) {
+    return;
+  }
+  if (!dst.isEmpty()) {
+    dst += QStringLiteral("\n\n");
+  }
+  dst += text;
+}
+
+// Place notes on custId's projects. The same project id is kept, then a
+// project with the same name. Anything left over is kept on the default
+// project so changing customer does not drop the text.
+Report commentsForCustomer(Store &store, qint64 customerId,
+                           const std::vector<NotedComment> &notes,
+                           qint64 anchorId) {
+  Report out;
+  const std::vector<Project> projects = store.listProjects(customerId, false);
+  if (projects.empty()) {
+    return out;
+  }
+  std::vector<QString> texts(projects.size());
+  int def = -1;
+  for (int i = 0; i < static_cast<int>(projects.size()); ++i) {
+    if (projects[static_cast<size_t>(i)].isDefault && def < 0) {
+      def = i;
+    }
+  }
+  auto indexOfId = [&](qint64 id) {
+    if (id <= 0) {
+      return -1;
+    }
+    for (int i = 0; i < static_cast<int>(projects.size()); ++i) {
+      if (projects[static_cast<size_t>(i)].id == id) {
+        return i;
+      }
+    }
+    return -1;
+  };
+  auto indexOfName = [&](const QString &name) {
+    const QString key = projectMatchKey(name);
+    if (key.isEmpty()) {
+      return -1;
+    }
+    for (int i = 0; i < static_cast<int>(projects.size()); ++i) {
+      if (projectMatchKey(projects[static_cast<size_t>(i)].name) == key) {
+        return i;
+      }
+    }
+    return -1;
+  };
+  struct Pending {
+    QString name;
+    QString comment;
+  };
+  std::vector<Pending> leftover;
+  for (const NotedComment &note : notes) {
+    if (note.comment.trimmed().isEmpty()) {
+      continue;
+    }
+    int idx = indexOfId(note.projectId);
+    if (idx < 0) {
+      idx = indexOfName(note.name);
+    }
+    if (idx >= 0) {
+      appendCommentBlock(texts[static_cast<size_t>(idx)], note.comment);
+    } else {
+      leftover.push_back(Pending{note.name, note.comment});
+    }
+  }
+  if (!leftover.empty()) {
+    const int idx = def >= 0 ? def : 0;
+    QString &dst = texts[static_cast<size_t>(idx)];
+    const bool label = leftover.size() > 1 || !dst.trimmed().isEmpty();
+    for (const Pending &pending : leftover) {
+      QString block = pending.comment;
+      if (label) {
+        const QString shown = stripDefaultSuffix(pending.name);
+        if (!shown.isEmpty()) {
+          block = shown + QLatin1Char('\n') + pending.comment;
+        }
+      }
+      appendCommentBlock(dst, block);
+    }
+  }
+  qint64 newAnchor = 0;
+  if (indexOfId(anchorId) >= 0) {
+    newAnchor = anchorId;
+  } else {
+    for (const NotedComment &note : notes) {
+      if (note.projectId != anchorId) {
+        continue;
+      }
+      const int idx = indexOfName(note.name);
+      if (idx >= 0) {
+        newAnchor = projects[static_cast<size_t>(idx)].id;
+      }
+      break;
+    }
+  }
+  for (int i = 0; i < static_cast<int>(projects.size()); ++i) {
+    const QString &text = texts[static_cast<size_t>(i)];
+    if (text.trimmed().isEmpty()) {
+      continue;
+    }
+    ReportLine ln;
+    ln.projectId = projects[static_cast<size_t>(i)].id;
+    ln.comment = text;
+    out.lines.push_back(ln);
+  }
+  out.projectId = newAnchor;
+  return out;
+}
+
+// A stored customer can disagree with the project the lines belong to.
+// Open on the customer that owns those lines so the comments are visible.
+qint64 customerForReport(Store &store, const Report &r, bool isNew) {
+  if (isNew) {
+    if (r.customerId > 0) {
+      return r.customerId;
+    }
+    if (r.projectId > 0) {
+      return store.projectCustomerLocalId(r.projectId);
+    }
+    return 0;
+  }
+  const qint64 anchorOwner =
+      r.projectId > 0 ? store.projectCustomerLocalId(r.projectId) : 0;
+  bool linesOnAnchor = r.lines.empty() && anchorOwner > 0;
+  for (const ReportLine &ln : r.lines) {
+    if (anchorOwner > 0 &&
+        store.projectCustomerLocalId(ln.projectId) == anchorOwner) {
+      linesOnAnchor = true;
+      break;
+    }
+  }
+  if (anchorOwner > 0 &&
+      (r.customerId <= 0 || (r.customerId != anchorOwner && linesOnAnchor))) {
+    return anchorOwner;
+  }
+  if (r.customerId <= 0) {
+    for (const ReportLine &ln : r.lines) {
+      const qint64 owner = store.projectCustomerLocalId(ln.projectId);
+      if (owner > 0) {
+        return owner;
+      }
+    }
+  }
+  return r.customerId;
+}
+
 void fillCommentTable(QTableWidget *table, Store &store, qint64 customerId,
                       const Report &r, qint64 anchorId) {
   table->setRowCount(0);
@@ -284,10 +501,7 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
   ui.syncStateLabel->setText(syncFlags(r));
 
   auto *custCombo = ui.customerCombo;
-  qint64 selectedCust = r.customerId;
-  if (selectedCust <= 0 && r.projectId > 0) {
-    selectedCust = store.projectCustomerLocalId(r.projectId);
-  }
+  qint64 selectedCust = customerForReport(store, r, isNew);
   for (const Customer &c : store.listCustomers(true)) {
     custCombo->addItem(c.name, static_cast<qlonglong>(c.id));
   }
@@ -309,11 +523,24 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
   } else if (r.projectId > 0) {
     anchorId = r.projectId;
   }
+  // The first fill uses the stored lines. Later fills, including a customer
+  // change, keep whatever is on screen and move it onto the new projects.
+  bool commentsReady = false;
   auto reloadProjects = [&] {
     const qint64 custId = custCombo->currentData().toLongLong();
-    const bool sameCustomer = custId == selectedCust;
-    fillCommentTable(comments, store, custId, sameCustomer ? r : Report{},
-                     sameCustomer ? anchorId : 0);
+    Report shown = r;
+    qint64 anchor = anchorId;
+    if (commentsReady) {
+      const int current = comments->currentRow();
+      if (current >= 0 && comments->item(current, 0)) {
+        anchor = comments->item(current, 0)->data(Qt::UserRole).toLongLong();
+      }
+      shown = commentsForCustomer(store, custId,
+                                  notesFromCommentTable(comments), anchor);
+      anchor = shown.projectId;
+    }
+    fillCommentTable(comments, store, custId, shown, anchor);
+    commentsReady = true;
   };
   reloadProjects();
   QObject::connect(custCombo, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -381,6 +608,7 @@ bool showReportDialog(QWidget *parent, Store &store, const Report *existing,
   QObject::connect(ui.cancelButton, &QPushButton::clicked, &dlg,
                    &QDialog::reject);
   QObject::connect(ui.saveButton, &QPushButton::clicked, &dlg, [&] {
+    commitCommentEditor(comments);
     const qint64 custId = custCombo->currentData().toLongLong();
     std::vector<Project> projects = store.listProjects(custId, false);
     std::vector<ReportLine> rows;
