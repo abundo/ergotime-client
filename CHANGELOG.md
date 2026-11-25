@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-25
+
 ### Fixed
 
 - Sync while a report is running no longer rebuilds the comment table under an open editor. That rebuild logged `QAbstractItemView::commitData called with an editor that does not belong to this view`.
@@ -13,6 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - Creating, editing, or stopping a report stores the start and stop on a minute boundary. The shortest report is one minute. A report that starts at 12:20 ends at 12:21:00. A shorter entry is stored as that one minute.
 - Editing a report and choosing another customer keeps the comments. A comment stays on a project with the same name. Any other comment moves to that customer's default project.
 - Creating a report starts on the customer and project selected in the main window. A report whose stored customer does not own its projects opens on the customer that does, so the comments are shown.
+- The hour and minute buttons on a report no longer crash. A button that moves both start and stop keeps the length when the time crosses midnight.
 - A batch create is marked synced only when its client_uuid matches. An empty id no longer claims another report's server row.
 - A date stored without a timezone is read as UTC, the same as values written with a Z suffix.
 - Catalog sync removes customers and projects the server no longer returns. A report line on a removed project keeps its text on a project that remains, so the time entry can still be pushed.
@@ -20,6 +23,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Changed
 
 - Clear log in the log pane is a button. Clicking it empties the pane.
+- Clicking a project comment opens the editor.
+- Group box titles sit on the frame outline, with the line broken around the title.
 - Creating or editing a report refuses a length of 24 hours or more. The start and stop stay as entered, and Save explains why it did not store the report.
 - Changing the date on Started, or the start or stop date while editing a report, asks whether that was intended. The time can still be changed directly. Creating a report still edits the date without asking.
 - A report is a customer and a time range. The comment area is a table of that customer's projects. The default project is preselected. Comments on several projects share the one interval. Comments on a single project keep the whole interval on that project.

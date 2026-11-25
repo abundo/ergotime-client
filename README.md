@@ -2,7 +2,7 @@
 
 Official desktop client. Release notes are in [CHANGELOG.md](CHANGELOG.md). License: [GPLv3](LICENSE).
 
-Desktop time tracker. A release uses the same data directory as the Go client, `~/.ergotime2`, including `config.json` and `ergotime.db`, and the same HTTP sync protocol. The window title shows the version. A build that is not a clean checkout of the matching `vX.Y.Z` tag appends the git SHA-1 and uses `~/.ergotime2-dev` instead.
+Desktop time tracker. A tagged release keeps `config.json` and `ergotime.db` in `~/.ergotime2`. The window title shows the version. A build that is not a clean checkout of the matching `vX.Y.Z` tag appends the git SHA-1 and uses `~/.ergotime2-dev` instead. Sync speaks protocol 3.
 
 ![ErgoTime desktop client](docs/main-window.png)
 
